@@ -10,6 +10,7 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 from data.target_data import PAD_TOKEN, RING_START_TOKEN, RING_END_TOKENS, Data
 from time import time
+from tqdm import tqdm
 from model.transformers_sota import TransformerConfig, Transformer
 
 bce_loss = torch.nn.BCEWithLogitsLoss(reduction='mean')
@@ -308,7 +309,7 @@ class BaseGenerator(nn.Module):
             data.update(id)
             return data
 
-        for idx in range(max_len):
+        for idx in tqdm(range(max_len)):
             if len(data_list) == 0:
                 break
 
@@ -533,12 +534,24 @@ class CondGenerator(BaseGenerator):
         data_idxs = list(range(num_samples))
         data_idxs_ended = []
 
-        if guidance_min != 1.0 or guidance_max != 1.0:
-            use_guidance = True
-            guidance = torch.rand(num_samples, 1, dtype=batched_cond_data.dtype, device=device)*(guidance_max-guidance_min) + guidance_min
-        else:
-            use_guidance = False
-            guidance = 1.0
+        guidance_min = torch.tensor(
+            guidance_min, dtype=batched_cond_data.dtype, device=device
+        )
+        guidance_max = torch.tensor(
+            guidance_max,
+            dtype=batched_cond_data.dtype,
+            device=device,
+        )
+        guidance = (
+            torch.rand(
+                num_samples,
+                guidance_min.shape[0],
+                dtype=batched_cond_data.dtype,
+                device=device,
+            )
+            * (guidance_max - guidance_min)
+            + guidance_min
+        )
         temperature = torch.rand(num_samples, 1, dtype=batched_cond_data.dtype, device=device)*(temperature_max-temperature_min) + temperature_min
 
         def _update_data(inp):
@@ -546,49 +559,68 @@ class CondGenerator(BaseGenerator):
             data.update(id)
             return data
 
-        for idx in range(max_len):
-            if len(data_list) == 0:
-                break
-            feature_list = [data.featurize() for data in data_list]
-            batched_mol_data = Data.collate(feature_list)
-            batched_mol_data = [tsr.to(device) for tsr in batched_mol_data]
-            #batched_mol_data_randomized = Data.collate([from_smiles(data.to_smiles(), self.vocab, randomize_order=True, MAX_LEN=max_len, start_min=False).featurize() for data in data_list])
-            #batched_mol_data_randomized = [tsr.to(device) for tsr in batched_mol_data_randomized]
+        with tqdm(total=max_len) as pbar:
+            for idx in range(max_len):
+                if len(data_list) == 0:
+                    break
+                feature_list = [data.featurize() for data in data_list]
+                batched_mol_data = Data.collate(feature_list)
+                batched_mol_data = [tsr.to(device) for tsr in batched_mol_data]
+                #batched_mol_data_randomized = Data.collate([from_smiles(data.to_smiles(), self.vocab, randomize_order=True, MAX_LEN=max_len, start_min=False).featurize() for data in data_list])
+                #batched_mol_data_randomized = [tsr.to(device) for tsr in batched_mol_data_randomized]
 
-            #for i in range(len(data_idxs)):
-            #    assert data_list[i].tracker_id == data_idxs[i]
-            if use_guidance:
-                logits_cond, _ = self(batched_mol_data, batched_cond_data[data_idxs], mask_cond=mask_cond)
-                logits_uncond, predicted_prop = self(batched_mol_data, batched_cond_data[data_idxs], mask_cond=[True for i in range(self.n_properties)])
-                logits_cond = logits_cond[:, -1] / temperature[data_idxs]
+                #for i in range(len(data_idxs)):
+                #    assert data_list[i].tracker_id == data_idxs[i]
+                logits_uncond, predicted_prop = self(
+                    batched_mol_data,
+                    batched_cond_data[data_idxs],
+                    mask_cond=[True for i in range(self.n_properties)],
+                )
                 logits_uncond = logits_uncond[:, -1] / temperature[data_idxs]
-                logits = logits_cond
                 not_inf = torch.logical_not(torch.isinf(logits_uncond))
-                guidance_ = guidance[data_idxs]
-                logits[not_inf] = ((1-guidance_)*logits_uncond)[not_inf] + (guidance_*logits_cond)[not_inf]
-            else: # no guidance
-                logits, _ = self(batched_mol_data, batched_cond_data[data_idxs], mask_cond=mask_cond)
-                if track_property_closeness:
-                    _, predicted_prop = self(batched_mol_data, batched_cond_data[data_idxs], mask_cond=[True for i in range(self.n_properties)])
-                logits = logits[:, -1] / temperature[data_idxs]
-            if top_k > 0:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            preds = Categorical(logits=logits).sample()
 
-            data_list = [_update_data(pair) for pair in zip(data_list, preds.tolist())]
-            if track_property_closeness:
-                prop_pred_ended += [predicted_prop[i, -1, :] for i, data in enumerate(data_list) if data.ended]
-            data_list_ended += [data for data in data_list if data.ended]
-            data_idxs_ended += [data_idx for data_idx, data in zip(data_idxs, data_list) if data.ended]
-            data_idxs = [data_idx for data_idx, data in zip(data_idxs, data_list) if not data.ended]
-            data_list = [data for data in data_list if not data.ended]
-            if idx == max_len-1:
-                for data in data_list:
-                    data.error = "incomplete"
-                    print(data.error)
-            #for i in range(len(data_idxs_ended)):
-            #    assert data_list_ended[i].tracker_id == data_idxs_ended[i]
+                #wv and f_osc
+                
+                for i in range(self.n_properties):
+                    mask = [True]*self.n_properties
+                    mask[i] = False
+                    logits_cnd, _ = self(
+                            batched_mol_data,
+                            batched_cond_data[data_idxs],
+                            mask_cond=mask,
+                        )
+                    logits_cnd = logits_cnd[:, -1] / temperature[data_idxs]
+                    if i == 0:
+                        logits = logits_cnd
+                
+                    guidance_ = guidance[data_idxs]
+                    guidance_ = guidance_[..., i:i+1]
+                    if i == 0:
+                        logits[not_inf] = logits_uncond[not_inf] + (guidance_ * (logits_cnd - logits_uncond))[not_inf]
+                    else:
+                        logits[not_inf] = logits[not_inf] + (guidance_ * (logits_cnd - logits_uncond))[not_inf]
+
+                        
+
+                if top_k > 0:
+                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < v[:, [-1]]] = -float('Inf')
+                preds = Categorical(logits=logits).sample()
+
+                data_list = [_update_data(pair) for pair in zip(data_list, preds.tolist())]
+                if track_property_closeness:
+                    prop_pred_ended += [predicted_prop[i, -1, :] for i, data in enumerate(data_list) if data.ended]
+                data_list_ended += [data for data in data_list if data.ended]
+                data_idxs_ended += [data_idx for data_idx, data in zip(data_idxs, data_list) if data.ended]
+                data_idxs = [data_idx for data_idx, data in zip(data_idxs, data_list) if not data.ended]
+                data_list = [data for data in data_list if not data.ended]
+                if idx == max_len-1:
+                    for data in data_list:
+                        data.error = "incomplete"
+                        print(data.error)
+                #for i in range(len(data_idxs_ended)):
+                #    assert data_list_ended[i].tracker_id == data_idxs_ended[i]
+                pbar.update(1)
 
         # Combined finished and unfinished molecules
         data_idxs_all = data_idxs_ended + data_idxs
