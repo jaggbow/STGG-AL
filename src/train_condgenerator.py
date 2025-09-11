@@ -1,10 +1,12 @@
 import os
 import sys
 import argparse
-from numpy.lib.arraysetops import unique
+# from numpy.lib.arraysetops import unique
 from rdkit import Chem
+import pickle
 import random
 import torch
+import time
 import copy
 from torch.utils.data import DataLoader
 import shutil
@@ -13,7 +15,7 @@ import datetime
 import torch.distributed as dist
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import NeptuneLogger
+from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.strategies import DDPStrategy
 from pytorch_lightning.utilities import rank_zero_only
 import moses
@@ -23,7 +25,7 @@ from torch.distributions.bernoulli import Bernoulli
 
 from model.generator import CondGenerator
 from data.dataset import get_cond_datasets, DummyDataset, merge_datasets
-from props.properties import penalized_logp, MAE_properties, MAE_properties_estimated, best_rewards_gflownet, get_xtb_scores, return_top_k, remove_duplicates, average_similarity, average_similarity2, average_similarity_
+from props.properties import penalized_logp, MAE_properties, MAE_properties_estimated, best_rewards_gflownet, get_xtb_scores, return_top_k, remove_duplicates, average_similarity, average_similarity2, create_fragmentprop, average_similarity_
 from utils.utils import compute_sequence_cross_entropy, compute_property_accuracy, compute_sequence_accuracy, canonicalize
 from train_generator import BaseGeneratorLightningModule
 from evaluate.MCD.evaluator import TaskModel, compute_molecular_metrics
@@ -121,6 +123,9 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
         self.hparams.n_properties = self.train_dataset.properties.shape[1]
         self.hparams.cat_var_index = self.train_dataset.categorical_prop
         self.hparams.cont_var_index = self.train_dataset.continuous_prop
+        print("Continuous variable indices:", self.hparams.cont_var_index)
+        print("Categorical variable indices:", self.hparams.cat_var_index)
+        print("Number of properties:", self.hparams.n_properties)
 
         self.mask_prop = self.train_dataset.mask_prop
         self.extra_prop = self.train_dataset.extra_prop
@@ -312,116 +317,199 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
     # Sample extreme values for each properties and evaluate the OOD generated molecules 
     def check_samples_ood(self):
         assert self.hparams.num_samples_ood % self.hparams.n_gpu == 0
-        num_samples = self.hparams.num_samples_ood // self.hparams.n_gpu if not self.trainer.sanity_checking else 2
-        assert len(self.hparams.ood_values) == 1 or len(self.hparams.ood_values) == 2*len(self.hparams.ood_names)
-        i_ = -1
+        num_samples = (
+            self.hparams.num_samples_ood // self.hparams.n_gpu
+            if not self.trainer.sanity_checking
+            else 2
+        )
+        assert len(self.hparams.ood_values) == 1 or len(
+            self.hparams.ood_values
+        ) == 2 * len(self.hparams.ood_names)
         
-        for feat_name in self.hparams.ood_names:
+        properties_np = np.zeros((num_samples, self.train_dataset.n_properties))
+        for k, feat_name in enumerate(self.hparams.ood_names):
             idx = np.where(feat_name == self.train_dataset.properties_names)[0][0]
-            for j in range(2): #
-                i_ += 1
-                if self.hparams.ood_values[i_] == 666:
-                    break
-                if j == 0: # u + std
-                    stats_name = f"sample_ood_{idx}_{feat_name}_mean_plus_std"
-                    if len(self.hparams.ood_values) <= 1:
-                        properties_np = self.train_dataset.get_mean_plus_std_property(idx, std=4)
-                        print(f'raw_prop: {self.train_dataset.scaler_properties.inverse_transform(properties_np)[0]}')
-                    else:
-                        properties_np = np.zeros((1, self.train_dataset.n_properties))
-                        properties_np[:, idx] = self.hparams.ood_values[i_]
-                        print(f'raw_prop: {properties_np[0]}')
-                        if self.train_dataset.scaler_properties is not None:
-                            properties_np = self.train_dataset.scaler_properties.transform(properties_np) # raw to whatever
-                else: # u - std
-                    stats_name = f"sample_ood_{idx}_{feat_name}_mean_minus_std"
-                    if len(self.hparams.ood_values) <= 1:
-                        properties_np = self.train_dataset.get_mean_plus_std_property(idx, std=-4)
-                        print(f'raw_prop: {self.train_dataset.scaler_properties.inverse_transform(properties_np)[0]}')
-                    else:
-                        properties_np = np.zeros((1, self.train_dataset.n_properties))
-                        properties_np[:, idx] = self.hparams.ood_values[i_]
-                        print(f'raw_prop: {properties_np[0]}')
-                        if self.train_dataset.scaler_properties is not None:
-                            properties_np = self.train_dataset.scaler_properties.transform(properties_np) # raw to whatever
-                print(f'std_prop: {properties_np[0, idx]}')
-                print(stats_name)
-                properties_np = np.repeat(properties_np, num_samples, axis=0)
-                local_properties = torch.tensor(properties_np).to(device=self.device, dtype=torch.float32)
-                mask_cond = [i != idx for i in range(self.train_dataset.n_properties)] # we only give the single property we care about to the model; the model can figure out the rest
-                local_smiles_list, results, local_prop_pred = self.sample_cond(local_properties, num_samples, 
-                    temperature_min=self.hparams.temperature_min, temperature_max=self.hparams.temperature_max, 
-                    guidance_min=self.hparams.guidance_min, guidance_max=self.hparams.guidance_max, mask_cond=mask_cond)
-                #print('smiles')
-                #print(local_smiles_list[0:5])
+            if (self.hparams.ood_values[2*k] != 666) and (self.hparams.ood_values[2*k+1] != 666):
+                mini = self.hparams.ood_values[2*k]
+                maxi = self.hparams.ood_values[2*k+1]
+                properties_np[:, idx] = np.random.rand(num_samples) * (maxi - mini) + mini
+        
+        if self.train_dataset.scaler_properties is not None:
+            if len(self.train_dataset.continuous_prop) > 0:
+                properties_np = (
+                    self.train_dataset.scaler_properties.transform(
+                        properties_np
+                    )
+                )
+        local_properties = torch.tensor(properties_np).to(
+            device=self.device, dtype=torch.float32
+        )
+        mask_cond = [True] * self.train_dataset.n_properties
+        guidance_min = [1] * self.train_dataset.n_properties
+        guidance_max = [1] * self.train_dataset.n_properties
+        for k, feat_name in enumerate(self.hparams.ood_names):
+            idx = np.where(feat_name == self.train_dataset.properties_names)[0][0]
+            if (self.hparams.ood_values[2*k] != 666) and (self.hparams.ood_values[2*k+1] != 666):
+                mask_cond[idx] = False
+                guidance_min[idx] = self.hparams.guidance_min[k]
+                guidance_max[idx] = self.hparams.guidance_max[k]
+        
+        local_smiles_list, results, local_prop_pred = self.sample_cond(
+            local_properties,
+            num_samples,
+            temperature_min=self.hparams.temperature_min,
+            temperature_max=self.hparams.temperature_max,
+            guidance_min=guidance_min,
+            guidance_max=guidance_max,
+            mask_cond=mask_cond,
+        )
 
-                # Gather results
-                if self.hparams.n_gpu > 1:
-                    global_smiles_list = [None for _ in range(self.hparams.n_gpu)]
-                    dist.all_gather_object(global_smiles_list, local_smiles_list)
-                    smiles_list = []
-                    for i in range(self.hparams.n_gpu):
-                        smiles_list += global_smiles_list[i]
+        # Gather results
+        if self.hparams.n_gpu > 1:
+            global_smiles_list = [None for _ in range(self.hparams.n_gpu)]
+            dist.all_gather_object(global_smiles_list, local_smiles_list)
+            smiles_list = []
+            for i in range(self.hparams.n_gpu):
+                smiles_list += global_smiles_list[i]
 
-                    global_properties = [torch.zeros_like(local_properties) for _ in range(self.hparams.n_gpu)]
-                    dist.all_gather(global_properties, local_properties)
-                    properties = torch.cat(global_properties, dim=0)
+            global_properties = [
+                torch.zeros_like(local_properties)
+                for _ in range(self.hparams.n_gpu)
+            ]
+            dist.all_gather(global_properties, local_properties)
+            properties = torch.cat(global_properties, dim=0)
 
-                    if local_prop_pred is not None:
-                        global_prop_pred = [torch.zeros_like(local_prop_pred) for _ in range(self.hparams.n_gpu)]
-                        dist.all_gather(global_prop_pred, local_prop_pred)
-                        prop_pred = torch.cat(global_prop_pred, dim=0)
-                    else:
-                        prop_pred = None
+            if local_prop_pred is not None:
+                global_prop_pred = [
+                    torch.zeros_like(local_prop_pred)
+                    for _ in range(self.hparams.n_gpu)
+                ]
+                dist.all_gather(global_prop_pred, local_prop_pred)
+                prop_pred = torch.cat(global_prop_pred, dim=0)
+            else:
+                prop_pred = None
+        else:
+            smiles_list = local_smiles_list
+            properties = local_properties
+            prop_pred = local_prop_pred
+
+        idx_valid = []
+        valid_smiles_list = []
+        valid_mols_list = []
+        for smiles in smiles_list:
+            if smiles is not None:
+                mol = Chem.MolFromSmiles(smiles)
+                if (
+                    mol is not None
+                    and mol.GetNumHeavyAtoms()
+                    <= self.hparams.max_number_of_atoms
+                    and max_ring_size(mol) <= self.hparams.max_ring_size
+                ):
+                    idx_valid += [True]
+                    valid_smiles_list += [smiles]
+                    valid_mols_list += [mol]
                 else:
-                    smiles_list = local_smiles_list
-                    properties = local_properties
-                    prop_pred = local_prop_pred
+                    idx_valid += [False]
+            else:
+                idx_valid += [False]
+        unique_smiles_set = set(valid_smiles_list)
+        novel_smiles_list = [
+            smiles
+            for smiles in valid_smiles_list
+            if smiles not in self.train_smiles_set
+        ]
+        efficient_smiles_list = [
+            smiles
+            for smiles in unique_smiles_set
+            if smiles in novel_smiles_list
+        ]
+        statistics = dict()
 
-                idx_valid = []
-                valid_smiles_list = []
-                valid_mols_list = []
-                for smiles in smiles_list:
-                    if smiles is not None:
-                        mol = Chem.MolFromSmiles(smiles)
-                        if mol is not None and mol.GetNumHeavyAtoms() <= self.hparams.max_number_of_atoms and max_ring_size(mol) <= self.hparams.max_ring_size:
-                            idx_valid += [True]
-                            valid_smiles_list += [smiles]
-                            valid_mols_list += [mol]
-                        else:
-                            idx_valid += [False]
-                    else:
-                        idx_valid += [False]
-                unique_smiles_set = set(valid_smiles_list)
-                novel_smiles_list = [smiles for smiles in valid_smiles_list if smiles not in self.train_smiles_set]
-                efficient_smiles_list = [smiles for smiles in unique_smiles_set if smiles in novel_smiles_list]
-                statistics = dict()
+        statistics["valid"] = (
+            float(len(valid_smiles_list)) / self.hparams.num_samples_ood
+        )
+        statistics["unique"] = float(
+            len(unique_smiles_set)
+        ) / len(valid_smiles_list)
+        statistics["novel"] = float(len(novel_smiles_list)) / len(
+            valid_smiles_list
+        )
+        statistics["efficient"] = (
+            float(len(efficient_smiles_list)) / self.hparams.num_samples_ood
+        )
 
-                statistics[f"{stats_name}/valid"] = float(len(valid_smiles_list)) / self.hparams.num_samples_ood
-                statistics[f"{stats_name}/unique"] = float(len(unique_smiles_set)) / len(valid_smiles_list)
-                statistics[f"{stats_name}/novel"] = float(len(novel_smiles_list)) / len(valid_smiles_list)
-                statistics[f"{stats_name}/efficient"] = float(len(efficient_smiles_list)) / self.hparams.num_samples_ood
-                properties_estimated_unscaled = None
-                if self.train_dataset.scaler_properties is not None:
-                    if prop_pred is not None:
-                        properties_estimated_unscaled = torch.tensor(self.train_dataset.scaler_properties.inverse_transform(prop_pred[idx_valid].cpu().numpy())).to(device=self.device, dtype=properties.dtype)
-                    properties_unscaled = torch.tensor(self.train_dataset.scaler_properties.inverse_transform(properties[idx_valid].cpu().numpy())).to(device=self.device, dtype=properties.dtype)
-                else:
-                    properties_unscaled = properties[idx_valid]
-                    if prop_pred is not None:
-                        properties_estimated_unscaled = prop_pred[idx_valid]
-                        properties_estimated_unscaled = properties_estimated_unscaled[:, idx]
-                print(properties_unscaled[0])
-                statistics[f"{stats_name}/Min_MAE"], statistics[f"{stats_name}/Min10_MAE"], statistics[f"{stats_name}/Min100_MAE"], statistics[f"{stats_name}/prop_pred_diff1"], statistics[f"{stats_name}/prop_pred_diff10"], statistics[f"{stats_name}/prop_pred_diff100"] = MAE_properties(valid_mols_list, properties=properties_unscaled[:, idx].unsqueeze(1), name=feat_name, properties_estimated=properties_estimated_unscaled, max_value=self.hparams.ood_values[i_]) # molwt, LogP, QED
-                print(statistics[f"{stats_name}/valid"])
-                print(statistics[f"{stats_name}/Min_MAE"])
-                print(statistics[f"{stats_name}/Min10_MAE"])
-                print(statistics[f"{stats_name}/Min100_MAE"])
-                print(statistics[f"{stats_name}/prop_pred_diff1"])
-                print(statistics[f"{stats_name}/prop_pred_diff10"])
-                print(statistics[f"{stats_name}/prop_pred_diff100"])
-                for key, val in statistics.items():
-                    self.log(key, val, on_step=False, on_epoch=True, logger=True, sync_dist=self.hparams.n_gpu > 1)
+        # Save molecules
+        logdir = os.path.join(hparams.save_checkpoint_dir, hparams.tag) 
+        print(f"Saving the molecules to {logdir}...")
+
+        filename = round(time.time() * 1000)
+        with open(os.path.join(logdir, f'{filename}.pkl'), 'wb') as f:
+            payload = {
+                "smiles": efficient_smiles_list,
+                "metadata": {
+                    "guidance_min": self.hparams.guidance_min,
+                    "guidance_max": self.hparams.guidance_max,
+                    "temperature_min": self.hparams.temperature_min,
+                    "temperature_max": self.hparams.temperature_max,
+                    "properties": {
+                        property_name: [self.hparams.ood_values[2*i], self.hparams.ood_values[2*i+1]] for i, property_name in enumerate(self.hparams.ood_names)
+                    },
+                },
+                "statistics": {
+                    "num_samples": self.hparams.num_samples_ood,
+                    "num_valid": len(valid_smiles_list),
+                    "num_efficient": len(efficient_smiles_list),
+                }
+            }
+            pickle.dump(payload, f)
+        properties_estimated_unscaled = None
+        if self.train_dataset.scaler_properties is not None:
+            if prop_pred is not None:
+                properties_estimated_unscaled = torch.tensor(
+                    self.train_dataset.scaler_properties.inverse_transform(
+                        prop_pred[idx_valid].cpu().numpy()
+                    )
+                ).to(device=self.device, dtype=properties.dtype)
+            properties_unscaled = torch.tensor(
+                self.train_dataset.scaler_properties.inverse_transform(
+                    properties[idx_valid].cpu().numpy()
+                )
+            ).to(device=self.device, dtype=properties.dtype)
+        else:
+            properties_unscaled = properties[idx_valid]
+            if prop_pred is not None:
+                properties_estimated_unscaled = prop_pred[idx_valid]
+                
+        for k, feat_name in enumerate(self.hparams.ood_names):
+            idx = np.where(feat_name == self.train_dataset.properties_names)[0][0]
+            stats_name = f"sample_ood_{idx}_{feat_name}"
+            
+            if (self.hparams.ood_values[2*k] != 666) and (self.hparams.ood_values[2*k+1] != 666) and (feat_name not in ["s1", "delta", "target_core"]):
+                (
+                    statistics[f"{stats_name}/Min_MAE"],
+                    statistics[f"{stats_name}/Min10_MAE"],
+                    statistics[f"{stats_name}/Min100_MAE"],
+                    statistics[f"{stats_name}/prop_pred_diff1"],
+                    statistics[f"{stats_name}/prop_pred_diff10"],
+                    statistics[f"{stats_name}/prop_pred_diff100"],
+                ) = MAE_properties(
+                    valid_mols_list,
+                    properties=properties_unscaled[:, idx].unsqueeze(1),
+                    name=feat_name,
+                    properties_estimated=properties_estimated_unscaled[:, idx],
+                    max_abs_value=self.hparams.ood_values[2*k+1],
+                )  # molwt, LogP, QED
+
+        
+            for key, val in statistics.items():
+                self.log(
+                    key,
+                    val,
+                    on_step=False,
+                    on_epoch=True,
+                    logger=True,
+                    sync_dist=self.hparams.n_gpu > 1,
+                )
             
     # Sample from specific range of values for each properties and evaluate using our own estimator
     def check_samples_specific(self):
@@ -529,12 +617,24 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
             print(current_datetime)
             local_xtb_prop_pred = get_xtb_scores(local_smiles_list, name=self.hparams.tag+current_datetime+str(self.global_rank)) # overwrite prop-preds with the xtb predictions
             local_xtb_prop_pred = torch.tensor(local_xtb_prop_pred).to(device=self.device, dtype=torch.float32)
+            local_fragprop = create_fragmentprop(local_smiles_list)
+            local_fragprop = torch.tensor(local_fragprop).to(device=self.device, dtype=torch.float32)
             if 'wavelength_energy' in self.train_dataset.properties_names:
                 idx_wv = np.where('wavelength_energy' == self.train_dataset.properties_names)[0][0]
                 local_prop_pred[:, idx_wv] = local_xtb_prop_pred[:, 0]
             if 'f_osc' in self.train_dataset.properties_names:
                 idx_osc = np.where('f_osc' == self.train_dataset.properties_names)[0][0]
                 local_prop_pred[:, idx_osc] = local_xtb_prop_pred[:, 1]
+            
+            if 'has_fragment' in self.train_dataset.properties_names:
+                idx_frag = np.where('has_fragment' == self.train_dataset.properties_names)[0][0]
+                local_prop_pred[:, idx_frag] = local_fragprop[:, 0]
+
+            if 'wavelength_categorical' in self.train_dataset.properties_names:
+                idx_wv_cat = np.where('wavelength_categorical' == self.train_dataset.properties_names)[0][0]
+                local_prop_pred[:, idx_wv_cat] = local_xtb_prop_pred[:, 0] >= 1000
+            
+            print(local_prop_pred)
             # Check and remove any inf/nans
             good_ones = local_prop_pred.isfinite().all(axis=1).tolist()
             print(f"{sum(good_ones)}/{len(good_ones)} were kept after removing Inf or NaNs")
@@ -581,7 +681,7 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
         if self.hparams.append_generated_mols_to_file != '' and self.global_rank == 0:
             assert 'xtb' in self.hparams.dataset_name # only with XTB for now
             print(f'Appending generated molecules to file: {self.hparams.append_generated_mols_to_file}')
-            properties_generated = prop_pred[:, 0:2].cpu().numpy()
+            properties_generated = prop_pred.cpu().numpy()
             properties_generated = np.concatenate((np.expand_dims(np.array(smiles_list, dtype=object), axis=1), properties_generated), axis=1)
             properties_generated = properties_generated[0:self.hparams.top_k_to_add] # only keep Top-K
             if os.path.exists(self.hparams.append_generated_mols_to_file):
@@ -1098,8 +1198,8 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
         # Tunable knobs post-training
         parser.add_argument("--temperature_min", type=float, default=1.0)
         parser.add_argument("--temperature_max", type=float, default=1.0)
-        parser.add_argument("--guidance_min", type=float, default=1.0) 
-        parser.add_argument("--guidance_max", type=float, default=1.0)
+        parser.add_argument("--guidance_min", nargs="+", type=float, default=[1.0])
+        parser.add_argument("--guidance_max", nargs="+", type=float, default=[1.0])
         parser.add_argument("--top_k", type=int, default=0) # if > 0, we only select from the top-k tokens
         #(1-gamma)*model(generated_seq_no_prompt) + gamma*model(generated_seq_with_prompt)
 
@@ -1175,11 +1275,12 @@ if __name__ == "__main__":
     parser.add_argument("--log_every_n_steps", type=int, default=50)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--load_checkpoint_path", type=str, default="")
-    parser.add_argument("--save_checkpoint_dir", type=str, default="CHANGE_TO_YOUR_DIR/AutoregressiveMolecules_checkpoints")
+    parser.add_argument("--save_checkpoint_dir", type=str, default=f"{os.environ['SCRATCH']}/AutoregressiveMolecules_checkpoints")
     parser.add_argument("--tag", type=str, default="default")
     parser.add_argument("--val_acc_tracking", action="store_true") # If False, track lowest val loss, if True, track lowest val accuracy
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--last", action="store_true")
+    parser.add_argument("--offline", action="store_true") # Runs offline mode in WandB
     hparams = parser.parse_args()
 
     if hparams.dataset_name in ['bbbp', 'bace', 'hiv']:
@@ -1195,14 +1296,15 @@ if __name__ == "__main__":
     if hparams.compile:
         model = torch.compile(model)
 
-    neptune_logger = NeptuneLogger(
-        api_key="YOUR_API_KEY",
-        project="YOUR_PROJECT_KEY",
-        source_files="**/*.py",
+
+    wandb_logger = WandbLogger(
+        project="OLED",
+        save_dir=os.path.join(hparams.save_checkpoint_dir, hparams.tag),
         tags=hparams.tag.split("_"),
-        log_model_checkpoints=False,
-        )
-    neptune_logger.log_hyperparams(vars(hparams))
+        log_model=False,
+        offline=hparams.offline
+    )
+    wandb_logger.log_hyperparams(vars(hparams))
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(hparams.save_checkpoint_dir, hparams.tag), 
         save_last=True,
@@ -1223,7 +1325,7 @@ if __name__ == "__main__":
         accelerator="cpu" if hparams.cpu else "gpu",
         strategy=strategy,
         precision="bf16-mixed" if hparams.bf16 else "32-true",
-        logger=neptune_logger,
+        logger=wandb_logger,
         default_root_dir="../resource/log/",
         max_epochs=hparams.max_epochs,
         callbacks=[checkpoint_callback],

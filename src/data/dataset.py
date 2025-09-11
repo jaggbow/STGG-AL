@@ -256,7 +256,7 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
             if finetune_dataset in ['bbbp', 'bace', 'hiv', 'zinc', 'qm9', 'moses']:
                 pass
             elif finetune_dataset in ['xtb']:
-                properties_finetune_names = np.array(['wavelength_energy','f_osc'], dtype=object)
+                properties_finetune_names = np.array(['wavelength_energy','f_osc', "has_fragment"], dtype=object)
         n_properties_finetune = len(properties_finetune_names)
 
         properties_pretrain_names = np.array([], dtype=object)
@@ -264,7 +264,7 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
             if pretrain_dataset in ['bbbp', 'bace', 'hiv', 'zinc', 'qm9', 'moses']:
                 pass
             elif pretrain_dataset in ['xtb']:
-                properties_pretrain_names = np.array(['wavelength_energy','f_osc'], dtype=object)
+                properties_pretrain_names = np.array(['wavelength_energy','f_osc', "has_fragment"], dtype=object)
         n_properties_pretrain = len(properties_pretrain_names)
 
         self.categorical_prop = []
@@ -304,9 +304,10 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
             self.smiles_list = df[my_index, 0] # col 0
             self.properties = None
         elif self.dataset_name in ['xtb']:
-            self.properties = df[:, 2:4].astype(np.float32)
-            self.properties_names = np.array(['wavelength_energy','f_osc'], dtype=object)
-            self.smiles_list = df[:, 4] # col 0
+            self.categorical_prop = [2] # has_fragment and wavelength_categorical are both categorical variables
+            self.properties = df[:, 2:5].astype(np.float32)
+            self.properties_names = np.array(['wavelength_energy','f_osc', "has_fragment"], dtype=object)
+            self.smiles_list = df[:, 5] # col 0
             my_index = np.array(my_index)[~np.isinf(self.properties[my_index, 0])]
             self.properties = self.properties[my_index]
             self.smiles_list = self.smiles_list[my_index]
@@ -324,6 +325,11 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
                 which_to_keep = which_to_keep | which_to_keep2
 
             self.properties[:,0] = 1239.8/self.properties[:,0] # change from lambda to energy
+        elif "jmt_cont_core" in self.dataset_name:
+            self.properties_names = np.array(["target_core","s1","delta"], dtype=object)
+            self.categorical_prop = [0]
+            self.properties = df[:, 2:5].astype(np.float32)
+            self.smiles_list = df[:, 1]
 
         # Mask nothing
         if self.properties is not None:
@@ -453,7 +459,8 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
         if scaler_std_properties is None:
             scaler_std = StandardScaler()
             self.scaler_std_properties = ColumnTransformer(scaler_std, self.continuous_prop, self.categorical_prop)
-            self.scaler_std_properties.fit(self.properties)
+            if len(self.continuous_prop) > 0:
+                self.scaler_std_properties.fit(self.properties)
         else:
             self.scaler_std_properties = scaler_std_properties
 
@@ -464,28 +471,38 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
             elif scaling_type == 'minmax':
                 scaler = MinMaxScaler(feature_range=(-1, 1))
                 self.scaler_properties = ColumnTransformer(scaler, self.continuous_prop, self.categorical_prop)
-                self.scaler_properties.fit(self.properties)
+                if len(self.continuous_prop) > 0:
+                    self.scaler_properties.fit(self.properties)
             elif scaling_type == 'none':
                 self.scaler_properties = None
             else:
                 raise NotImplementedError()
         else:
             self.scaler_properties = scaler_properties
+        if len(self.continuous_prop) > 0:
+            properties_std = self.scaler_std_properties.transform(self.properties)
+        else:
+            properties_std = self.properties
 
-        properties_std = self.scaler_std_properties.transform(self.properties)
-        print(properties_std[0:2])
         self.mu_prior=np.mean(properties_std, axis=0)   
         self.cov_prior=np.cov(properties_std.T)
 
         if scaling_type == 'std':
             self.properties = properties_std
         elif self.scaler_properties is not None:
-            self.properties = self.scaler_properties.transform(self.properties)
+            if len(self.continuous_prop) > 0:
+                self.properties = self.scaler_properties.transform(self.properties)
 
         if which_to_keep is not None:
             self.properties = self.properties[which_to_keep]
             self.smiles_list = self.smiles_list[which_to_keep]
-        print(self.properties.shape)
+        
+        for i, pname in enumerate(self.properties_names):
+            if i in self.categorical_prop:
+                print(pname, "is a categorical property with min:", self.properties[:, i].min(), "max:", self.properties[:, i].max())
+            if i not in self.categorical_prop:
+                print(pname, "is a continuous property with mean:", self.properties[:, i].mean(), "std:", self.properties[:, i].std(), "min:", self.properties[:, i].min(), "max:", self.properties[:, i].max())
+
 
         # Remove portion of the observations
         if portion_used < 1.0:
