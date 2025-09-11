@@ -17,6 +17,8 @@ import numpy as np
 from props.xtb.stda_xtb import STDA_XTB, default_stda_config
 import pandas as pd
 import os
+import ray
+from tqdm import tqdm
 import multiprocessing
 
 def similarity(a, b):
@@ -243,20 +245,145 @@ def MAE_properties_estimated(mols, train_smiles, properties, properties_estimate
 
     return Min_MAE, Min10_MAE, Min100_MAE, Min_average_similarity, Min10_average_similarity, Min100_average_similarity, Min10_diversity
 
+
+def get_all_fused_ring_systems(mol):
+    """Extract all fused ring systems from a given molecule."""
+    ri = mol.GetRingInfo()
+    if not ri.NumRings():
+        return []  # No rings in the molecule
+
+    # Get ring bonds and atoms
+    ring_bonds = ri.BondRings()
+    ring_atoms = ri.AtomRings()
+
+    # Create a graph where nodes are rings and edges represent shared atoms or bonds
+    ring_graph = {}
+
+    for i in range(len(ring_atoms)):
+        ring_graph[i] = set()
+        for j in range(len(ring_atoms)):
+            if i != j:
+                # Check if rings share bonds or atoms
+                if set(ring_bonds[i]).intersection(ring_bonds[j]) or set(
+                    ring_atoms[i]
+                ).intersection(ring_atoms[j]):
+                    ring_graph[i].add(j)
+
+    # Find all connected components of the ring graph
+    visited = set()
+    all_components = []
+
+    def dfs(node, component):
+        visited.add(node)
+        component.add(node)
+
+        for neighbor in ring_graph[node]:
+            if neighbor not in visited:
+                dfs(neighbor, component)
+
+    for node in ring_graph:
+        if node not in visited:
+            current_component = set()
+            dfs(node, current_component)
+            all_components.append(current_component)
+
+    # For each component, create a RWMol containing only that fused ring system
+    all_fused_systems = []
+
+    for component in all_components:
+        # Collect atoms and bonds from the fused ring component
+        component_ring_atoms = set()
+        component_ring_bonds = set()
+
+        for ring_idx in component:
+            component_ring_atoms.update(ring_atoms[ring_idx])
+            component_ring_bonds.update(ring_bonds[ring_idx])
+
+        # Create a new RWMol containing only this fused ring system
+        rw_mol = Chem.RWMol()
+        atom_mapping = {}  # Map old atom indices to new ones
+
+        for atom_idx in component_ring_atoms:
+            atom = mol.GetAtomWithIdx(atom_idx)
+            new_idx = rw_mol.AddAtom(atom)
+            atom_mapping[atom_idx] = new_idx
+
+        for bond_idx in component_ring_bonds:
+            bond = mol.GetBondWithIdx(bond_idx)
+            begin_idx = bond.GetBeginAtomIdx()
+            end_idx = bond.GetEndAtomIdx()
+
+            if begin_idx in atom_mapping and end_idx in atom_mapping:
+                rw_mol.AddBond(
+                    atom_mapping[begin_idx], atom_mapping[end_idx], bond.GetBondType()
+                )
+
+        # Add the completed fused ring system to the list
+        try:
+            all_fused_systems.append(rw_mol.GetMol())
+        except:
+            # Skip if we can't create a valid molecule (rare cases)
+            pass
+
+    return all_fused_systems
+
+
+def process_smiles(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    Chem.Kekulize(mol)
+    Chem.RemoveStereochemistry(mol)
+    return mol
+
+
+FRAGMENTS = set(
+    [
+        "c1=c-c=c2-c(=c-1)-n-c1=c-c=c-c=c-1-2",
+        "c1=c-c=c2-c(=c-1)-c1=c-c=c-c3=c-1-n-2-c1=c-c=c-c2=c-1B3c1=c3-c(=c-c=c-1)-c1=c-c=c-c=c-1-n-2-3",
+        "[B-]1n2-c=c-c=c-2C=C2C=CC=[N+]12",
+        "c1=c-c=c2Nc3=c-c=c-c=c-3Cc-2=c-1",
+        "c1=c-c2=c-c=c3-c=c-c=c4-c=c-c(=c-1)-c-2=c-4-3",
+        "c1=c-c=c2-c(=c-1)-c-c1=c-c=c-c3=c-1-n-2-c1=c-c=c-c=c-1-c-3",
+        "c1=c-c=c2-s-c=n-c-2=c-1",
+        "c1=c-c=c2Oc3=c-c=c-c=c-3Nc-2=c-1",
+        "c1=c-c=c2-o-c-c=c-c-2=c-1",
+        "c1=c-c=c2-c=c-c=c-c-2=c-1",
+    ]
+)
+
+
+def create_fragmentprop(smiles_list):
+    properties = []
+    for smile in smiles_list:
+        mol = process_smiles(smile)
+        all_fused_ring_systems = get_all_fused_ring_systems(mol)
+        all_ring_systems = set(
+            map(
+                lambda x: Chem.MolToSmiles(x, canonical=True),
+                all_fused_ring_systems,
+            )
+        )
+        fragments_in_mol = all_ring_systems.intersection(FRAGMENTS)
+        properties.append(int(len(fragments_in_mol) > 0))
+    properties = np.array(properties)
+    properties = properties.reshape(-1, 1)
+    properties = properties.astype(float)
+    return properties
+
+    
 def get_xtb_scores(smiles, sqrt=False, name="name"):
-    if not os.path.exists(f"CHANGE_TO_YOUR_DIR/stda_scratch/{name}"): 
-        os.makedirs(f"CHANGE_TO_YOUR_DIR/stda_scratch/{name}")
-    if not os.path.exists(f"CHANGE_TO_YOUR_DIR/mol_coords_logs/{name}"): 
-        os.makedirs(f"CHANGE_TO_YOUR_DIR/mol_coords_logs/{name}")
-    if not os.path.exists(f"CHANGE_TO_YOUR_DIR/final_mol_coords/{name}"): 
-        os.makedirs(f"CHANGE_TO_YOUR_DIR/final_mol_coords/{name}")
+    if not os.path.exists(f"{os.environ['SCRATCH']}/stda_scratch/{name}"): 
+        os.makedirs(f"{os.environ['SCRATCH']}/stda_scratch/{name}")
+    if not os.path.exists(f"{os.environ['SCRATCH']}/mol_coords_logs/{name}"): 
+        os.makedirs(f"{os.environ['SCRATCH']}/mol_coords_logs/{name}")
+    if not os.path.exists(f"{os.environ['SCRATCH']}/final_mol_coords/{name}"): 
+        os.makedirs(f"{os.environ['SCRATCH']}/final_mol_coords/{name}")
     cfg = {
-        'log_dir': f"CHANGE_TO_YOUR_DIR/stda_scratch/{name}",
-        'xtb_path': "CHANGE_TO_YOUR_DIR/xtb4stda", 
+        'log_dir': f"{os.environ['SCRATCH']}/stda_scratch/{name}",
+        'xtb_path': f"{os.environ['HOME']}/xtb4stda", 
         'stda_command': "stda_v1.6.3",
         "moltocoord_config": {
-            'log_dir': f"CHANGE_TO_YOUR_DIR/mol_coords_logs/{name}",
-            "final_coords_log_dir": f"CHANGE_TO_YOUR_DIR/final_mol_coords/{name}", # save all final coordinates to here
+            'log_dir': f"{os.environ['SCRATCH']}/mol_coords_logs/{name}",
+            "final_coords_log_dir": f"{os.environ['SCRATCH']}/final_mol_coords/{name}", # save all final coordinates to here
             'ff': 'GFN-FF',  # or MMFF, UFF, or RDKIT (generates by ETKDG)
             'semipirical_opt': 'xtb',  # or None
             'conformer_config': {
@@ -269,8 +396,24 @@ def get_xtb_scores(smiles, sqrt=False, name="name"):
         'stda_cutoff': 6,
         "remove_scratch": True,
     }
-    stdaxtb = STDA_XTB(**cfg)
-    props = stdaxtb.get_scores(smiles)
+    ray.init(ignore_reinit_error=True)
+    num_actors = 8
+    actors = [STDA_XTB.remote(**cfg) for _ in range(num_actors)]
+    futures = []
+    for i, mol in enumerate(smiles):
+        actor = actors[i % num_actors]
+        futures.append(actor.get_score.remote(mol))
+
+    # Collect results with tqdm
+    results = []
+    for f in tqdm(futures):
+        results.append(ray.get(f))
+
+    # Assemble results
+    props = np.zeros((len(results), 2))
+    for i, result in enumerate(results):
+        props[i, 0] = result['energy']
+        props[i, 1] = result['f_osc']
     if sqrt:
         props[:,1] = np.sqrt(props[:,1])
     return props
