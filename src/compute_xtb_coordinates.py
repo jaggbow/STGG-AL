@@ -110,7 +110,8 @@ def _xtb_optimize(
         if not xyz_out.exists():
             raise RuntimeError("xTB did not produce geom.xtbopt.xyz")
         return xyz_out
-    except:
+    except Exception as e:
+        print(e)
         return None
 
 
