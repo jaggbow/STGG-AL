@@ -12,7 +12,7 @@ import props.sascorer as sascorer
 from moses.utils import mapper
 import torch_geometric.data as gd
 from rdkit.rdBase import BlockLogs
-from model import mxmnet
+#from model import mxmnet
 import numpy as np
 from props.xtb.stda_xtb import STDA_XTB, default_stda_config
 import pandas as pd
