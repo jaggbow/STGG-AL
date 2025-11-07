@@ -37,10 +37,14 @@ def _embed_ff_optimize(mol, workdir, n_confs: int = 50):
             ff.Minimize(maxIts=200)
             energies.append((cid, ff.CalcEnergy()))
         else:
-            ff = AllChem.UFFGetMoleculeForceField(mol, confId=cid)
-            ff.Minimize(maxIts=200)
-            energies.append((cid, ff.CalcEnergy()))
-
+            try:
+                ff = AllChem.UFFGetMoleculeForceField(mol, confId=cid)
+                ff.Minimize(maxIts=200)
+                energies.append((cid, ff.CalcEnergy()))
+            except:
+                pass
+    if len(energies) == 0:
+        return None, None
     best_cid, best_e = min(energies, key=lambda x: x[1])
     with xyz.open("w") as fh:
         fh.write(f"{mol.GetNumAtoms()}\nMMFF (kcal mol-1): {best_e:.3f}\n")
@@ -132,7 +136,10 @@ if __name__ == "__main__":
     futures = [
         process_smiles.remote(idx, smi, workdir) for idx, smi in enumerate(smiles_list)
     ]
-    payload = {}
+    if (smiles_path.parent / f"matcher_{smiles_path.stem}.pkl").exists():
+        paylod = pickle.load(open(smiles_path.parent / f"matcher_{smiles_path.stem}.pkl", "rb"))
+    else:
+        payload = {}
     with tqdm(total=len(futures)) as pbar:
         while futures:
             done, futures = ray.wait(futures, num_returns=1, timeout=args.timeout)
@@ -160,4 +167,4 @@ if __name__ == "__main__":
     )
 
     with open(smiles_path.parent / f"matcher_{smiles_path.stem}.pkl", "wb") as f:
-        pickle.dump(data, f)
+        pickle.dump(payload, f)
