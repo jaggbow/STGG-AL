@@ -10,12 +10,8 @@ if "SCRATCH" in os.environ:
     SCRATCH_DIR = os.environ["SCRATCH"]
 else:
     SCRATCH_DIR = "./"
-GJF_DIRECTORY = Path(
-    "/network/scratch/o/oussama.boussif/AutoregressiveMolecules_checkpoints/gaussian"
-)
-SBATCH_DIRECTORY = Path(
-    "/network/scratch/o/oussama.boussif/AutoregressiveMolecules_checkpoints/sbatch"
-)
+GJF_DIRECTORY = Path(SCRATCH_DIR)/ "AutoregressiveMolecules_checkpoints/gaussian"
+SBATCH_DIRECTORY = Path(SCRATCH_DIR) / "AutoregressiveMolecules_checkpoints/sbatch"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -37,7 +33,7 @@ if __name__ == "__main__":
     mem = args.mem
     time = args.time
     os.makedirs(gjf_dir, exist_ok=True)
-
+    gjf_paths = []
     for id_, xtb_coord_path, smi in tqdm(zip(ids, xtb_coordinate_paths, smiles)):
         with open(xtb_coord_path, "r") as f:
             lines = f.readlines()
@@ -54,8 +50,7 @@ if __name__ == "__main__":
 
 0 1
 """
-            + "\n".join(lines)
-            + "\n"
+            + "".join(lines)
         )
 
         # Second step: TDDFT using optimized geometry
@@ -75,6 +70,7 @@ if __name__ == "__main__":
         # Combine and write
         gjf_content = gjf_part1 + gjf_part2
         gjf_path = gjf_dir / f"{title}.gjf"
+        gjf_paths.append(gjf_path)
         with open(gjf_path, "w") as f:
             f.write(gjf_content)
 
@@ -85,29 +81,38 @@ if __name__ == "__main__":
     cpus = nproc
     mem = f"{mem}G"
     partition = "rrg-bengioy-ad"  # Change to your cluster’s partition
+    with open("tmp_gaussian.txt", "w") as f:
+        for gjf in gjf_paths:
+            f.write(str(gjf) + "\n")
 
-    for gjf_path in gjf_dir.glob("*.gjf"):
-        with open("tmp_script", "w") as f:
-            f.write(f"""#!/bin/bash
-    #SBATCH --account={partition}
-    #SBATCH --job-name={gjf_path.stem}
-    #SBATCH --output={SCRATCH_DIR}/slurm-%j.out
-    #SBATCH --ntasks=1
-    #SBATCH --cpus-per-task={cpus}
-    #SBATCH --mem={mem}
-    #SBATCH --time={time}
+    num_jobs = len(gjf_paths)
+    script_path = "run_gaussian_array.sh"
+    with open(script_path, "w") as f:
+        f.write(f"""#!/bin/bash
+#SBATCH --account={partition}
+#SBATCH --job-name=gaussian_array
+#SBATCH --output={SCRATCH_DIR}/slurm-%A_%a.out
+#SBATCH --array=0-{num_jobs-1}
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --mem={mem}
+#SBATCH --time={time}
 
-    module load gaussian/g16 
+module load gaussian/g16
 
-    export GAUSS_SCRDIR=$SCRATCH/$SLURM_JOB_ID
-    mkdir -p $GAUSS_SCRDIR
+# Pick the corresponding .gjf file for this array index
+gjf_file=$(sed -n "$((SLURM_ARRAY_TASK_ID+1))p" tmp_gaussian.txt)
+echo "Running Gaussian on $gjf_file"
 
-    g16 {gjf_path}
+export GAUSS_SCRDIR=$SCRATCH/$SLURM_JOB_ID
+mkdir -p $GAUSS_SCRDIR
 
-    rm -rf $GAUSS_SCRDIR
-    """)
+g16 "$gjf_file"
+
+rm -rf $GAUSS_SCRDIR
+""")
 
         sbatch_response = subprocess.check_output(
-            ["sbatch tmp_script"], shell=True
-        ).decode()  # submit jobs
+            ["sbatch", script_path]
+        ).decode().strip()  # submit jobs
         print(sbatch_response)

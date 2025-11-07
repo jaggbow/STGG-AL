@@ -28,14 +28,14 @@ if __name__ == "__main__":
     df.to_csv(csv_fname)
 
     df = pd.read_csv(csv_fname)
-    good_props = df[(df["s1"] < 2.8) & (df["s1"] > 2.6) & (df["delta"] < 0.2)]
+    good_props = df[(df["aS1"] < 2.8) & (df["aS1"] > 2.6) & (df["adelta"] < 0.2)]
     good_idx = [int(item[4:]) for item in good_props["id"]]
     print(
         f"There are {len(good_idx)} molecules that passed the property check and they represent {(100 * len(good_idx) / len(smiles_list)):.2f} % of the dataset."
     )
     data["statistics"]["num_pass_property"] = len(good_idx)
     print(data["statistics"])
-    df = df[(df["s1"] < 2.8) & (df["s1"] > 2.6) & (df["delta"] < 0.2)]
+    df = df[(df["aS1"] < 2.8) & (df["aS1"] > 2.6) & (df["adelta"] < 0.2)]
     df.to_csv(csv_fname)
     with open(smiles_path, "wb") as file:
         pickle.dump(data, file)

@@ -99,7 +99,6 @@ if __name__ == "__main__":
 
     novel_smiles = [smi for smi in smiles_list if smi not in existing_smiles]
     fragment_presence = []
-    boron_presence = []
     max_ring_size = []
     nice_smiles = []
 
@@ -108,9 +107,6 @@ if __name__ == "__main__":
         core_structure = get_largest_fused_ring_system(smiles)
         fragments_in_mol = core_structure in FRAGMENTS
         fragment_presence.append(int(fragments_in_mol))
-        boron_presence.append(
-            int(any(atom.GetSymbol() == "B" for atom in mol.GetAtoms()))
-        )
 
         ri = mol.GetRingInfo()
         max_ring_size_ = 0
@@ -124,7 +120,6 @@ if __name__ == "__main__":
 
         if (
             fragments_in_mol
-            and any(atom.GetSymbol() == "B" for atom in mol.GetAtoms())
             and max_ring_size_ <= MAX_RING_SIZE
         ):
             nice_smiles.append(smiles)
