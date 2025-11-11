@@ -3,6 +3,8 @@
 GENERATOR_DIR=$HOME/projects/rrg-bengioy-ad/jaggbow/STGG-AL
 PROPERTY_PREDICTOR_DIR=$HOME/projects/rrg-bengioy-ad/jaggbow/hamiltonian
 GENERATOR_CHECKPOINT_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/jmt_cont_core
+GAUSSIAN_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/gaussian
+
 n_samples=10000
 batch_size=500
 temperature_min=0.7
@@ -24,3 +26,8 @@ echo "Computing xtb coordinates and filtering fragments ${coord_id}"
 pp_filter=$(sbatch --dependency=afterok:$prop_id:$coord_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/filter_prop.sh | awk '{print $4}')
 echo "Predicting properties and filtering ${pp_filter}"
 
+gaussian_id=$(sbatch --dependency=afterok:$pp_filter run_gaussian_array.sh | awk '{print $4}')
+echo "Launching gaussian jobs ${gaussian_id}"
+
+parse_id= $(sbatch --dependency=afterok:$gaussian_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR experiments/parse_results.sh | awk '{print $4}')
+echo "Parsing results ${parse_id}"

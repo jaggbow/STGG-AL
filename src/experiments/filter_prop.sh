@@ -23,4 +23,4 @@ cd $GENERATOR_DIR
 source .venv/bin/activate
 cd src
 python filter_prop_predictor.py --smiles_path=$smiles_path
-#python make_gaussian.py --csv_path=$csv_path
+python make_gaussian.py --csv_path=$csv_path
