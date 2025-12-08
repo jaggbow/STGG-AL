@@ -111,8 +111,3 @@ g16 "$gjf_file"
 
 rm -rf $GAUSS_SCRDIR
 """)
-
-        sbatch_response = subprocess.check_output(
-            ["sbatch", script_path]
-        ).decode().strip()  # submit jobs
-        print(sbatch_response)
