@@ -25,3 +25,8 @@ find $PROPERTY_PREDICTOR_DIR/results -mindepth 1 -name "*.ckpt" -delete
 # Delete cache
 find $PROPERTY_PREDICTOR_DIR/datasets -mindepth 1 -type f -delete
 find $GENERATOR_DIR/resource/data/jmt_cont_core -mindepth 1 -not -name '*.csv' -delete
+
+# Push data
+git add ../resource/data/jmt_cont_core/data.csv
+git commit -m "updated generator data"
+git push
