@@ -326,7 +326,7 @@ class PropCondDataset(Dataset): # molwt, LogP, QED
 
             self.properties[:,0] = 1239.8/self.properties[:,0] # change from lambda to energy
         elif "jmt_cont_core" in self.dataset_name:
-            self.properties_names = np.array(["target_core","aS1","adelta"], dtype=object)
+            self.properties_names = np.array(["target_core","vs1","vdelta"], dtype=object)
             self.categorical_prop = [0]
             print(df[0])
             self.properties = df[:, 3:6].astype(np.float32)
