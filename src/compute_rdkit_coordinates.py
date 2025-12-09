@@ -11,7 +11,7 @@ from tqdm import tqdm
 ray.init()
 
 
-def _embed_ff_optimize(mol, workdir, n_confs: int = 10):
+def _embed_ff_optimize(mol, workdir, n_confs: int = 5):
     """
     Return path to the lowest-energy MMFF minimized XYZ for *smiles*.
     The conformer search is embarrassingly parallel – RDKit will multithread.
@@ -57,7 +57,7 @@ def _embed_ff_optimize(mol, workdir, n_confs: int = 10):
     return xyz, charge
 
 
-@ray.remote(num_cpus=1)
+@ray.remote(num_cpus=4)
 def process_smiles(idx, smi, workdir):
     mol = Chem.MolFromSmiles(smi)
     mol = Chem.AddHs(mol, addCoords=True)
