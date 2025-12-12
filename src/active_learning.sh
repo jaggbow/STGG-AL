@@ -22,7 +22,7 @@ for step in $(seq 1 $N_STEPS); do
 
     cd $GENERATOR_DIR/src
     if [ -z "$prev_parse_id" ]; then
-        gen_id=$(sbatch experiments/jmt_cont_core.sh \
+        gen_id=$(sbatch experiments/generator.sh \
             --temperature_min $temperature_min \
             --temperature_max $temperature_max \
             --num_samples_ood $n_samples \
@@ -31,7 +31,7 @@ for step in $(seq 1 $N_STEPS); do
         prop_id=$(sbatch train.sh | awk '{print $4}')
         echo "[$step] Property predictor: $prop_id"
     else
-        gen_id=$(sbatch --dependency=afterok:$prev_parse_id experiments/jmt_cont_core.sh \
+        gen_id=$(sbatch --dependency=afterok:$prev_parse_id experiments/generator.sh \
             --temperature_min $temperature_min \
             --temperature_max $temperature_max \
             --num_samples_ood $n_samples \
