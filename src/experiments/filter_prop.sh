@@ -3,11 +3,21 @@
 #SBATCH --cpus-per-task=6
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --mem=48G
-#SBATCH --time=1:00:00
+#SBATCH --time=12:00:00
 #SBATCH -o /scratch/jaggbow/slurm-%j.out
 
 module load python/3.10
 module load xtb
+
+GENERATOR_CHECKPOINT_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/main_exp
+smiles_path=$(ls -t $GENERATOR_CHECKPOINT_DIR/*.pkl | head -n 1)
+
+# Run rdkit coordinate computation
+cd $GENERATOR_DIR
+source .venv/bin/activate
+cd src
+python compute_rdkit_coordinates.py --smiles_path=$smiles_path
+deactivate
 
 # Run property prediction
 cd $PROPERTY_PREDICTOR_DIR
@@ -23,4 +33,3 @@ cd $GENERATOR_DIR
 source .venv/bin/activate
 cd src
 python filter_prop_predictor.py --smiles_path=$smiles_path
-python make_gaussian.py --csv_path=$csv_path
