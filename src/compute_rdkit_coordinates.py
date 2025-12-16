@@ -11,44 +11,25 @@ from tqdm import tqdm
 ray.init()
 
 
-def _embed_ff_optimize(mol, workdir, n_confs: int = 5):
+def _embed_ff_optimize(mol, workdir):
     """
     Return path to the lowest-energy MMFF minimized XYZ for *smiles*.
     The conformer search is embarrassingly parallel – RDKit will multithread.
     """
     charge = Chem.GetFormalCharge(mol)
-    xyz = workdir / "mmff.xyz"
+    xyz = workdir / "basic.xyz"
     if xyz.exists():
         return xyz, charge
 
     params = AllChem.ETKDGv3()
-    params.numThreads = 1
-    params.pruneRmsThresh = 0.5
-    ids = AllChem.EmbedMultipleConfs(mol, numConfs=n_confs, params=params)
-    if len(ids) == 0:
+    params.randomSeed = 0
+    params.useRandomCoords = True
+    if AllChem.EmbedMolecule(mol, params) == -1:
         return None, None
 
-    energies = []
-    for cid in ids:
-        ff = AllChem.MMFFGetMoleculeForceField(
-            mol, AllChem.MMFFGetMoleculeProperties(mol), confId=cid
-        )
-        if ff is not None:
-            ff.Minimize(maxIts=200)
-            energies.append((cid, ff.CalcEnergy()))
-        else:
-            try:
-                ff = AllChem.UFFGetMoleculeForceField(mol, confId=cid)
-                ff.Minimize(maxIts=200)
-                energies.append((cid, ff.CalcEnergy()))
-            except:
-                pass
-    if len(energies) == 0:
-        return None, None
-    best_cid, best_e = min(energies, key=lambda x: x[1])
     with xyz.open("w") as fh:
-        fh.write(f"{mol.GetNumAtoms()}\nMMFF (kcal mol-1): {best_e:.3f}\n")
-        conf = mol.GetConformer(best_cid)
+        fh.write(f"{mol.GetNumAtoms()}\n\n")
+        conf = mol.GetConformer()
         for atom in mol.GetAtoms():
             pos = conf.GetAtomPosition(atom.GetIdx())
             fh.write(
@@ -57,17 +38,21 @@ def _embed_ff_optimize(mol, workdir, n_confs: int = 5):
     return xyz, charge
 
 
-@ray.remote(num_cpus=4)
+@ray.remote(num_cpus=1)
 def process_smiles(idx, smi, workdir):
-    mol = Chem.MolFromSmiles(smi)
-    mol = Chem.AddHs(mol, addCoords=True)
-    finaldir = workdir / str(idx)
-    finaldir.mkdir(exist_ok=True)
+    try:
+        mol = Chem.MolFromSmiles(smi)
+        mol = Chem.AddHs(mol, addCoords=True)
+        finaldir = workdir / str(idx)
+        finaldir.mkdir(exist_ok=True)
 
-    xyz, charge = _embed_ff_optimize(mol, finaldir)
-    if xyz is None:
+        xyz, charge = _embed_ff_optimize(mol, finaldir)
+        if xyz is None:
+            return None
+        return finaldir, xyz, charge, idx, smi
+    except Exception as e:
+        print(smi, e)
         return None
-    return finaldir, xyz, charge, idx, smi
 
 
 if __name__ == "__main__":
@@ -105,7 +90,7 @@ if __name__ == "__main__":
                 finaldir, xyz, charge, idx, smi = result
                 payload[f"stgg{idx}"] = {"SMILES": smi}
                 if xyz is not None:
-                    payload[f"stgg{idx}"]["rdkit_coordinates_path"] = (
+                    payload[f"stgg{idx}"]["basic_coordinates_path"] = (
                         xyz.absolute().as_posix()
                     )
             pbar.update(1)

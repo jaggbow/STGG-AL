@@ -22,20 +22,20 @@ if __name__ == "__main__":
     csv_fname = smiles_path.parent / f"{smiles_path.stem}.csv"
     df = pd.read_csv(csv_fname)
     df["SMILES"] = df["id"].apply(lambda x: payload[x]["SMILES"])
-    df["xtb_coordinates_path"] = df["id"].apply(
-        lambda x: payload[x]["xtb_coordinates_path"]
+    df["basic_coordinates_path"] = df["id"].apply(
+        lambda x: payload[x]["basic_coordinates_path"]
     )
     df.to_csv(csv_fname)
 
     df = pd.read_csv(csv_fname)
-    good_props = df[(df["aS1"] < 2.8) & (df["aS1"] > 2.6) & (df["adelta"] < 0.2)]
+    good_props = df[(df["vs1"] > 2.6) & (df["vdelta"] < 0.3)]
     good_idx = [int(item[4:]) for item in good_props["id"]]
     print(
         f"There are {len(good_idx)} molecules that passed the property check and they represent {(100 * len(good_idx) / len(smiles_list)):.2f} % of the dataset."
     )
     data["statistics"]["num_pass_property"] = len(good_idx)
     print(data["statistics"])
-    df = df[(df["aS1"] < 2.8) & (df["aS1"] > 2.6) & (df["adelta"] < 0.2)]
+    df = df[(df["vs1"] > 2.6) & (df["vdelta"] < 0.3)]
     df.to_csv(csv_fname)
     with open(smiles_path, "wb") as file:
         pickle.dump(data, file)
