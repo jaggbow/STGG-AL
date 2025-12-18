@@ -96,17 +96,17 @@ if __name__ == "__main__":
                 existing_smiles += old_data["smiles"]
     data = pickle.load(open(smiles_path, "rb"))
     smiles_list = data["smiles"]
+    molecule_id = data["molecule_id"]
 
-    novel_smiles = [smi for smi in smiles_list if smi not in existing_smiles]
-    fragment_presence = []
+    novel_smiles = [(mol_id, smi) for mol_id, smi in zip(molecule_id,  smiles_list) if smi not in existing_smiles]
     max_ring_size = []
     nice_smiles = []
+    nice_molecule_id = []
 
-    for smiles in tqdm(novel_smiles):
+    for mol_id, smiles in tqdm(novel_smiles):
         mol = Chem.MolFromSmiles(smiles)
         core_structure = get_largest_fused_ring_system(smiles)
         fragments_in_mol = core_structure in FRAGMENTS
-        fragment_presence.append(int(fragments_in_mol))
 
         ri = mol.GetRingInfo()
         max_ring_size_ = 0
@@ -123,6 +123,7 @@ if __name__ == "__main__":
             and max_ring_size_ <= MAX_RING_SIZE
         ):
             nice_smiles.append(smiles)
+            nice_molecule_id.append(mol_id)
 
     if len(novel_smiles) > 0:
         print(
@@ -132,6 +133,7 @@ if __name__ == "__main__":
         print("There are no novel smiles.")
         sys.exit()
     data["smiles"] = nice_smiles
+    data["molecule_id"] = nice_molecule_id
     data["statistics"]["num_efficient"] = len(novel_smiles)
     data["statistics"]["num_pass_fragments"] = len(nice_smiles)
 

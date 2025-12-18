@@ -576,6 +576,7 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
         with open(os.path.join(logdir, f"{filename}.pkl"), "wb") as f:
             payload = {
                 "smiles": efficient_smiles_list,
+                "molecule_id": list(range(len(efficient_smiles_list))),
                 "metadata": {
                     "guidance_min": self.hparams.guidance_min,
                     "guidance_max": self.hparams.guidance_max,
