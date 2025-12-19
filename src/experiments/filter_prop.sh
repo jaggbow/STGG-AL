@@ -10,7 +10,8 @@ module load python/3.10
 module load xtb
 
 GENERATOR_CHECKPOINT_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/main_exp
-smiles_path=$(ls -t $GENERATOR_CHECKPOINT_DIR/*.pkl | head -n 1)
+smiles_path=$(ls -t "$GENERATOR_CHECKPOINT_DIR"/*.pkl 2>/dev/null | grep -E '/[0-9]+\.pkl$' | head -n 1)
+
 
 # Run rdkit coordinate computation
 cd $GENERATOR_DIR
@@ -25,7 +26,7 @@ coordinate_dir=$(ls -td $GENERATOR_CHECKPOINT_DIR/*/ | head -n1)
 smiles_path=$(ls -t "$GENERATOR_CHECKPOINT_DIR"/*.pkl 2>/dev/null | grep -E '/[0-9]+\.pkl$' | head -n 1)
 csv_path="${smiles_path%.pkl}.csv"
 echo $coordinate_dir,$smiles_path,$csv_path
-uv run predict.py --checkpoint_path="${PROPERTY_PREDICTOR_DIR}/results/STGGDataset/test/1/0/last.ckpt" --xtb_results_folder=$coordinate_dir --output_path=$csv_path
+uv run predict.py --checkpoint_path="${PROPERTY_PREDICTOR_DIR}/results/STGGDataset/filtering/1/0/last.ckpt" --xtb_results_folder=$coordinate_dir --output_path=$csv_path
 deactivate
 
 # Filtering
