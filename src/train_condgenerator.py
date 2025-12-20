@@ -576,7 +576,7 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
         with open(os.path.join(logdir, f"{filename}.pkl"), "wb") as f:
             payload = {
                 "smiles": efficient_smiles_list,
-                "molecule_id": list(range(len(efficient_smiles_list))),
+                "molecule_id": [f"stgg{i}" for i in range(len(efficient_smiles_list)))],
                 "metadata": {
                     "guidance_min": self.hparams.guidance_min,
                     "guidance_max": self.hparams.guidance_max,
@@ -622,7 +622,7 @@ class CondGeneratorLightningModule(BaseGeneratorLightningModule):
             if (
                 (self.hparams.ood_values[2 * k] != 666)
                 and (self.hparams.ood_values[2 * k + 1] != 666)
-                and (feat_name not in ["aS1", "adelta", "target_core"])
+                and (feat_name not in ["vs1", "vdelta", "vs1_xtb", "vdelta_xtb", "target_core"])
             ):
                 (
                     statistics[f"{stats_name}/Min_MAE"],
