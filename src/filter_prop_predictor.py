@@ -10,7 +10,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     smiles_path = Path(args.smiles_path)
-
     data = pickle.load(open(smiles_path, "rb"))
     smiles_list = data["smiles"]
 
@@ -20,14 +19,14 @@ if __name__ == "__main__":
 
     # Run property prediction
     csv_fname = smiles_path.parent / f"{smiles_path.stem}.csv"
-    df = pd.read_csv(csv_fname)
+    df = pd.read_csv(csv_fname, index_col=0)
     df["SMILES"] = df["id"].apply(lambda x: payload[x]["SMILES"])
     df["basic_coordinates_path"] = df["id"].apply(
         lambda x: payload[x]["basic_coordinates_path"]
     )
     df.to_csv(csv_fname)
 
-    df = pd.read_csv(csv_fname)
+    df = pd.read_csv(csv_fname, index_col=0)
     good_props = df[(df["vs1"] > 2.6) & (df["vdelta"] < 0.3)]
     good_idx = [int(item[4:]) for item in good_props["id"]]
     print(
@@ -37,5 +36,7 @@ if __name__ == "__main__":
     print(data["statistics"])
     df = df[(df["vs1"] > 2.6) & (df["vdelta"] < 0.3)]
     df.to_csv(csv_fname)
+    data["smiles"] = df["SMILES"].tolist() # Filter-out the bad SMILES.
+    data["molecule_id"] = df["id"].tolist()
     with open(smiles_path, "wb") as file:
         pickle.dump(data, file)
