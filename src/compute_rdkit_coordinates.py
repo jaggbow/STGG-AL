@@ -65,15 +65,16 @@ if __name__ == "__main__":
     smiles_path = Path(args.smiles_path)
     data = pickle.load(open(smiles_path, "rb"))
     smiles_list = data["smiles"]
+    molecule_id = data["molecule_id"]
 
     workdir = smiles_path.parent / smiles_path.stem
     workdir.mkdir(exist_ok=True, parents=True)
 
     futures = [
-        process_smiles.remote(idx, smi, workdir) for idx, smi in enumerate(smiles_list)
+        process_smiles.remote(mol_id, smi, workdir) for mol_id, smi in zip(molecule_id, smiles_list)
     ]
     if (smiles_path.parent / f"matcher_{smiles_path.stem}.pkl").exists():
-        paylod = pickle.load(open(smiles_path.parent / f"matcher_{smiles_path.stem}.pkl", "rb"))
+        payload = pickle.load(open(smiles_path.parent / f"matcher_{smiles_path.stem}.pkl", "rb"))
     else:
         payload = {}
     with tqdm(total=len(futures)) as pbar:
@@ -87,10 +88,10 @@ if __name__ == "__main__":
                 ray.cancel(done[0], force=True)
                 result = None
             if result is not None:
-                finaldir, xyz, charge, idx, smi = result
-                payload[f"stgg{idx}"] = {"SMILES": smi}
+                finaldir, xyz, charge, mol_id, smi = result
                 if xyz is not None:
-                    payload[f"stgg{idx}"]["basic_coordinates_path"] = (
+                    payload[mol_id] = {"SMILES": smi}
+                    payload[mol_id]["basic_coordinates_path"] = (
                         xyz.absolute().as_posix()
                     )
             pbar.update(1)
