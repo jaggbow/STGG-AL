@@ -177,8 +177,8 @@ if __name__ == "__main__":
     futures = [
         process_smiles.remote(mol_id, smi, workdir) for mol_id, smi in zip(molecule_id, smiles_list)
     ]
-    if (smiles_path.parent / f"matcher_labeling_{smiles_path.stem}.pkl").exists():
-        payload = pickle.load(open(smiles_path.parent / f"matcher_labeling_{smiles_path.stem}.pkl", "rb"))
+    if (smiles_path.parent / f"labeling_{smiles_path.stem}.pkl").exists():
+        payload = pickle.load(open(smiles_path.parent / f"labeling_{smiles_path.stem}.pkl", "rb"))
     else:
         payload = {}
     
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     print(
         f"Finished generating molecule coordinates using XTB. You'll find them in {workdir} !"
     )
-    with open(smiles_path.parent / f"matcher_labeling_{smiles_path.stem}.pkl", "wb") as f:
+    with open(smiles_path.parent / f"labeling_{smiles_path.stem}.pkl", "wb") as f:
         pickle.dump(payload, f)
     df_dict = {
         "molecule_id": [k for k in payload],
