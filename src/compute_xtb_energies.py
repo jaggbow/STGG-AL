@@ -3,12 +3,14 @@ import subprocess
 from pathlib import Path
 import pickle
 import pandas as pd
-import ray
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from tqdm import tqdm
+from multiprocessing import Process, Queue
+import os
+import time
+from queue import Empty
 
-ray.init()
 
 def _embed_ff_optimize(mol, workdir, n_confs: int = 50):
     """
@@ -62,8 +64,8 @@ def _embed_ff_optimize(mol, workdir, n_confs: int = 50):
     return xyz, charge
 
 
-@ray.remote(num_cpus=1)
-def process_smiles(mol_id, smi, workdir):
+def process_smiles_worker(mol_id, smi, workdir, result_queue):
+    """Worker that processes a single SMILES and puts result in queue"""
     try:
         mol = Chem.MolFromSmiles(smi)
         mol = Chem.AddHs(mol, addCoords=True)
@@ -72,11 +74,12 @@ def process_smiles(mol_id, smi, workdir):
 
         xyz, charge = _embed_ff_optimize(mol, finaldir)
         if xyz is None:
-            return None
-        return finaldir, xyz, charge, mol_id, smi
+            result_queue.put((mol_id, smi, None))
+        else:
+            result_queue.put((mol_id, smi, (finaldir, xyz, charge, mol_id, smi)))
     except Exception as e:
         print(smi, e)
-        return None
+        result_queue.put((mol_id, smi, None))
 
 
 def _xtb_optimize(
@@ -163,7 +166,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--smiles_path", type=str)
     parser.add_argument("--timeout", type=int, default=75)
-    parser.add_argument("--num_threads", type=int, default=2)
+    parser.add_argument("--num_workers", type=int, default=4)
     args = parser.parse_args()
 
     smiles_path = Path(args.smiles_path)
@@ -174,48 +177,105 @@ if __name__ == "__main__":
     workdir = smiles_path.parent / smiles_path.stem
     workdir.mkdir(exist_ok=True, parents=True)
 
-    futures = [
-        process_smiles.remote(mol_id, smi, workdir) for mol_id, smi in zip(molecule_id, smiles_list)
-    ]
+    # Determine number of workers
+    n_jobs = args.num_workers
+    timeout_seconds = args.timeout
+    
+    print(f"Processing {len(smiles_list)} molecules with {n_jobs} workers (timeout: {timeout_seconds}s each)")
+
+    # Load existing payload if available
     if (smiles_path.parent / f"labeling_{smiles_path.stem}.pkl").exists():
         payload = pickle.load(open(smiles_path.parent / f"labeling_{smiles_path.stem}.pkl", "rb"))
     else:
         payload = {}
+
+    # Prepare task list
+    tasks = list(zip(molecule_id, smiles_list))
+    results = {}
+    active_processes = {}
+    result_queue = Queue()
+    pending_tasks = tasks.copy()
     
-    with tqdm(total=len(futures)) as pbar:
-        while futures:
-            done, futures = ray.wait(futures, num_returns=1, timeout=75)
-            if not done:
-                continue
+    timeout_count = 0
+    error_count = 0
+
+    with tqdm(total=len(tasks), desc="Processing molecules") as pbar:
+        while len(results) < len(tasks):
+            # Start new processes if slots available and tasks remaining
+            while len(active_processes) < n_jobs and pending_tasks:
+                mol_id, smi = pending_tasks.pop(0)
+                p = Process(target=process_smiles_worker, args=(mol_id, smi, workdir, result_queue))
+                p.start()
+                active_processes[mol_id] = {
+                    'process': p,
+                    'smi': smi,
+                    'start_time': time.time()
+                }
+
+            # Check for completed processes
             try:
-                result = ray.get(done[0], timeout=75)
-            except ray.exceptions.GetTimeoutError:
-                ray.cancel(done[0], force=True)
-                result = None
+                mol_id, smi, result = result_queue.get(timeout=0.1)
+                
+                if mol_id in active_processes:
+                    active_processes[mol_id]['process'].join(timeout=1)
+                    del active_processes[mol_id]
 
-            if result is not None:
-                finaldir, xyz, charge, mol_id, smi = result
-                try:
-                    xyz_out = _xtb_optimize(xyz, finaldir, threads=2, charge=charge)
-                    vs1, vt1 = _xtb_energies(xyz_out, finaldir, stda_cutoff=10)
-                    payload[mol_id] = {"SMILES": smi}
-                    payload[mol_id]["xtb_coordinates_path"] = (
-                        xyz_out.absolute().as_posix()
-                    )
+                if result is not None:
+                    finaldir, xyz, charge, mol_id, smi = result
+                    try:
+                        xyz_out = _xtb_optimize(xyz, finaldir, charge=charge)
+                        vs1, vt1 = _xtb_energies(xyz_out, finaldir, stda_cutoff=10)
+                        payload[mol_id] = {"SMILES": smi}
+                        payload[mol_id]["xtb_coordinates_path"] = xyz_out.absolute().as_posix()
+                        payload[mol_id]["vs1_xtb"] = vs1
+                        payload[mol_id]["vdelta_xtb"] = vs1 - vt1
+                    except Exception as e:
+                        tqdm.write(f"❌ XTB Error for {smi} (id: {mol_id}): {e}")
+                        error_count += 1
+                else:
+                    error_count += 1
+
+                results[mol_id] = result
+                pbar.update(1)
+
+            except Empty:
+                pass
+
+            # Check for timeouts
+            current_time = time.time()
+            for mol_id, proc_info in list(active_processes.items()):
+                elapsed = current_time - proc_info['start_time']
+                if elapsed > timeout_seconds:
+                    tqdm.write(f"⏱ Timeout ({timeout_seconds}s): {proc_info['smi']} (id: {mol_id})")
+                    proc_info['process'].terminate()
+                    proc_info['process'].join(timeout=2)
+                    if proc_info['process'].is_alive():
+                        proc_info['process'].kill()
+                        proc_info['process'].join()
                     
-                    payload[mol_id]["vs1_xtb"] = vs1
-                    payload[mol_id]["vdelta_xtb"] = vs1 - vt1
-                except Exception as e:
-                    print(e)
-                    pass
+                    del active_processes[mol_id]
+                    results[mol_id] = None
+                    timeout_count += 1
+                    pbar.update(1)
 
-            pbar.update(1)
-    
-    print(
-        f"Finished generating molecule coordinates using XTB. You'll find them in {workdir} !"
-    )
+            # Small sleep to prevent busy waiting
+            if not result_queue.empty() or not active_processes:
+                continue
+            time.sleep(0.05)
+
+    # Clean up any remaining processes
+    for proc_info in active_processes.values():
+        if proc_info['process'].is_alive():
+            proc_info['process'].terminate()
+            proc_info['process'].join()
+
+    successful = len(payload)
+    print(f"\n✓ Successful: {successful}/{len(tasks)} | ⏱ Timeouts: {timeout_count} | ❌ Errors: {error_count}")
+    print(f"Finished generating molecule coordinates using XTB. You'll find them in {workdir}!")
+
     with open(smiles_path.parent / f"labeling_{smiles_path.stem}.pkl", "wb") as f:
         pickle.dump(payload, f)
+    
     df_dict = {
         "molecule_id": [k for k in payload],
         "SMILES": [payload[k]["SMILES"] for k in payload],
