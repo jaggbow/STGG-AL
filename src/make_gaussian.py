@@ -2,7 +2,7 @@ import argparse
 import os
 import subprocess
 from pathlib import Path
-
+import pickle
 import pandas as pd
 from tqdm import tqdm
 
@@ -15,26 +15,42 @@ SBATCH_DIRECTORY = Path(SCRATCH_DIR) / "AutoregressiveMolecules_checkpoints/sbat
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv_path", type=str)
+    parser.add_argument("--csv_labeling", type=str)
+    parser.add_argument("--smiles_path", type=str)
     parser.add_argument("--cpus", default=16, type=int)
     parser.add_argument("--mem", default=16, type=int)
     parser.add_argument("--time", default="8:00:00", type=str)
+    parser.add_argument("--n_samples", default=500, type=int)
     args = parser.parse_args()
+    
+    smiles_path = Path(args.smiles_path)
+    smiles_id = smiles_path.stem
 
-    csv_path = Path(args.csv_path)
-    df = pd.read_csv(csv_path)
+    csv_path = Path(args.csv_labeling)
+    df = pd.read_csv(csv_path, index_col=0)
+    df = df.iloc[:args.n_samples]
+    
+    payload = pickle.load(
+        open(smiles_path.parent / f"labeling_{smiles_id}.pkl", "rb")
+    )
+
+    df["SMILES"] = df["molecule_id"].apply(lambda x: payload[x]["SMILES"])
+    df["xtb_coordinates_path"] = df["molecule_id"].apply(
+        lambda x: payload[x]["xtb_coordinates_path"]
+    )
 
     gjf_dir = GJF_DIRECTORY / csv_path.stem  # Folder with .gjf files
-    smiles = df.SMILES.values
-    ids = df.id.values
+    #smiles = df.SMILES.values
+    ids = df.molecule_id.values
     xtb_coordinate_paths = df.xtb_coordinates_path.values
+    
 
     nproc = args.cpus
     mem = args.mem
     time = args.time
     os.makedirs(gjf_dir, exist_ok=True)
     gjf_paths = []
-    for id_, xtb_coord_path, smi in tqdm(zip(ids, xtb_coordinate_paths, smiles)):
+    for id_, xtb_coord_path in tqdm(zip(ids, xtb_coordinate_paths)):
         with open(xtb_coord_path, "r") as f:
             lines = f.readlines()
             lines = lines[2:]
