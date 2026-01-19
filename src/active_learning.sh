@@ -1,75 +1,101 @@
 #!/bin/bash
 
+set -euo pipefail
 
-# ==== CONFIG ====
-N_STEPS=1  # number of AL iterations
-n_samples=10000
-batch_size=500
-temperature_min=0.7
-temperature_max=0.7
+# Resolve config relative to script location (important on SLURM)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
 
-GENERATOR_DIR=$HOME/projects/rrg-bengioy-ad/jaggbow/STGG-AL
-PROPERTY_PREDICTOR_DIR=$HOME/projects/rrg-bengioy-ad/jaggbow/hamiltonian
-GENERATOR_CHECKPOINT_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/jmt_cont_core
-GAUSSIAN_DIR=$SCRATCH/AutoregressiveMolecules_checkpoints/gaussian
+[ -d $GENERATOR_CHECKPOINT_DIR ] || mkdir $GENERATOR_CHECKPOINT_DIR
+[ -d $GENERATOR_CHECKPOINT_DIR/datasets ] || mkdir $GENERATOR_CHECKPOINT_DIR/datasets
+[ -d $GENERATOR_CHECKPOINT_DIR/checkpoints ] || mkdir $GENERATOR_CHECKPOINT_DIR/checkpoints
 
-prev_parse_id=""
+echo "Generator checkpoint directory: $GENERATOR_CHECKPOINT_DIR"
+echo "Generator directory: $GENERATOR_DIR"
+echo "Property predictor directory: $PROPERTY_PREDICTOR_DIR"
+
+# Initial training
+prep_id=$(sbatch --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/prepare_all_data.sh --save_labeling | awk '{print $4}')
+echo "[0] Prepare data; $prep_id"
+gen_id=$(sbatch --dependency=afterok:$prep_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/generator.sh \
+            --tag $tag \
+            --temperature_min $temperature_min \
+            --temperature_max $temperature_max \
+            --num_samples_ood $num_samples_ood \
+            --max_epochs $max_epochs \
+            --sample_batch_size $sample_batch_size | awk '{print $4}')
+echo "[0] Generator: $gen_id"
+cd $PROPERTY_PREDICTOR_DIR
+prop_id=$(sbatch --dependency=afterok:$prep_id train_filtering.sh train.epochs=$pp_epochs | awk '{print $4}')
+echo "[0] Property predictor: $prop_id"
+label_id=$(sbatch --dependency=afterok:$prep_id train_labeler.sh train.epochs=$pp_epochs | awk '{print $4}')
+echo "[0] Labling: $label_id"
 
 for step in $(seq 1 $N_STEPS); do
     echo "============================"
     echo "=== Active Learning Step $step ==="
     echo "============================"
-
+    move_filtering_ckpt=false
     cd $GENERATOR_DIR/src
-    if [ -z "$prev_parse_id" ]; then
-        gen_id=$(sbatch experiments/generator.sh \
-            --temperature_min $temperature_min \
-            --temperature_max $temperature_max \
-            --num_samples_ood $n_samples \
-            --sample_batch_size $batch_size | awk '{print $4}')
-        cd $PROPERTY_PREDICTOR_DIR
-        prop_id=$(sbatch train.sh | awk '{print $4}')
-        echo "[$step] Property predictor: $prop_id"
-    else
-        gen_id=$(sbatch --dependency=afterok:$prev_parse_id experiments/generator.sh \
-            --temperature_min $temperature_min \
-            --temperature_max $temperature_max \
-            --num_samples_ood $n_samples \
-            --sample_batch_size $batch_size | awk '{print $4}')
-        cd $PROPERTY_PREDICTOR_DIR
-        prop_id=$(sbatch --dependency=afterok:$prev_parse_id train.sh | awk '{print $4}')
-        echo "[$step] Property predictor: $prop_id"
+    filter_prop_id=$(sbatch --dependency=afterok:$prop_id:$gen_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/filter_prop.sh | awk '{print $4}')
+    echo "[$step] Property filtering: $filter_prop_id"
 
-    fi
-    echo "[$step] Generator: $gen_id"
-
-    cd $GENERATOR_DIR/src
-    coord_id=$(sbatch --dependency=afterok:$gen_id experiments/filter_and_compute_coordinates.sh | awk '{print $4}')
-    echo "[$step] Coordinates: $coord_id"
-
-    pp_filter=$(sbatch --dependency=afterok:$prop_id:$coord_id \
-        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR \
-        experiments/filter_prop.sh | awk '{print $4}')
-    echo "[$step] Filter properties: $pp_filter"
+    xtb_id=$(sbatch --dependency=afterok:$filter_prop_id \
+        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR \
+        experiments/run_xtb.sh | awk '{print $4}')
+    echo "[$step] XTB computation: $xtb_id"
   
-    while squeue -j $pp_filter > /dev/null 2>&1; do
-        sleep 180
-    done
-
-    gaussian_id=$(sbatch run_gaussian_array.sh | awk '{print $4}')
-    echo "[$step] Gaussian: $gaussian_id"
-
-    parse_id=$(sbatch --dependency=afterany:$gaussian_id \
-        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR \
-        experiments/parse_results.sh | awk '{print $4}')
+    labeling_id=$(sbatch --dependency=afterok:$xtb_id:$label_id \
+        --export=ALL,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR \
+        experiments/translate.sh | awk '{print $4}')
+    echo "[$step] Labeling: $labeling_id"
+    
+    continue_id=$labeling_id
+    if (( $step % $TARGET_ORACLE_FREQUENCY == 0 )); then
+    	make_gaussian_id=$(sbatch --dependency=afterok:$labeling_id --export=ALL,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/make_gaussian.sh --n_samples=$n_samples_target_oracle | awk '{print $4}')
+    	echo "[$step] Make Gaussian: $make_gaussian_id"
+	echo "Waiting for step $step to finish (job $make_gaussian_id)..."
+	while squeue -j $make_gaussian_id > /dev/null 2>&1; do
+            sleep 180
+    	done
+	gaussian_id=$(sbatch run_gaussian_array.sh | awk '{print $4}')
+    	echo "[$step] Launch Gaussian: $gaussian_id"
+	parse_gaussian_id=$(sbatch --dependency=afterany:$gaussian_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR experiments/parse_gaussian.sh | awk '{print $4}')
+	echo "[$step] Parse Gaussian: $parse_gaussian_id"
+	move_filtering_ckpt=true
+	continue_id=$parse_gaussian_id
+    fi
+    parse_id=$(sbatch --dependency=afterok:$continue_id \
+        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR experiments/parse_results.sh $move_filtering_ckpt | awk '{print $4}')
     echo "[$step] Parse results: $parse_id"
     
-    prev_parse_id=$parse_id
-    echo "Waiting for step $step to finish (job $parse_id)..."
-    
-    while squeue -j $parse_id > /dev/null 2>&1; do
-        sleep 180
-    done
+    # Training time
+    if (( $step % $TARGET_ORACLE_FREQUENCY == 0 )); then
+    	# Train the labeling model
+    	cd $GENERATOR_DIR/src
+    	prep_label_id=$(sbatch --dependency=afterok:$parse_id --export=ALL,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GENERATOR_DIR=$GENERATOR_DIR experiments/prepare_labeling_data.sh | awk '{print $4}')
+    	cd $PROPERTY_PREDICTOR_DIR
+    	label_id=$(sbatch --dependency=afterok:$prep_label_id train_labeler.sh train.epochs=$pp_epochs | awk '{print $4}')
+    	cd $GENERATOR_DIR/src
+    	relabel_id=$(sbatch --dependency=afterok:$label_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/relabel.sh | awk '{print $4}')
+	prep_id=$(sbatch --dependency=afterok:$relabel_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/prepare_all_data.sh | awk '{print $4}')
+    else
+    	# No labeling model training, just prep the data
+	prep_id=$(sbatch --dependency=afterok:$parse_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/prepare_all_data.sh --save_labeling | awk '{print $4}')
+    fi
+    gen_id=$(sbatch --dependency=afterok:$prep_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/generator.sh \
+            --tag $tag \
+            --temperature_min $temperature_min \
+            --temperature_max $temperature_max \
+            --num_samples_ood $num_samples_ood \
+            --max_epochs $max_epochs \
+            --sample_batch_size $sample_batch_size | awk '{print $4}')
+
+    echo "[$step] Generator: $gen_id"
+    cd $PROPERTY_PREDICTOR_DIR
+    prop_id=$(sbatch --dependency=afterok:$prep_id train_filtering.sh train.epochs=$pp_epochs | awk '{print $4}')
+    echo "[$step] Property predictor: $prop_id"
+
 
 done
 
