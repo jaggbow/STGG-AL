@@ -33,7 +33,7 @@ mv $GENERATOR_DIR/labeling.csv $GENERATOR_CHECKPOINT_DIR/datasets/labeling_${old
 
 # Delete past checkpoints
 find $GENERATOR_CHECKPOINT_DIR -maxdepth 1 -name "*.ckpt" -delete
-find $PROPERTY_PREDICTOR_DIR/results -mindepth 1 -name "*.ckpt" -delete
+
 
 # Delete cache
 find $PROPERTY_PREDICTOR_DIR/datasets -mindepth 1 -type f -delete

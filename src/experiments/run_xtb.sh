@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --account=rrg-bengioy-ad
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=96G
-#SBATCH --time=24:00:00
+#SBATCH --mem=64G
+#SBATCH --time=18:00:00
 #SBATCH -o /scratch/jaggbow/slurm-%j.out
 
 module load python/3.10
@@ -18,6 +18,6 @@ cd $GENERATOR_DIR
 source .venv/bin/activate
 cd src
 echo "Computing xtb energies on ${smiles_path}."
-python compute_xtb_energies.py --smiles_path=$smiles_path --num_workers=16
+python compute_xtb_energies.py --smiles_path=$smiles_path --num_workers=16 --timeout=180
 deactivate
 

@@ -31,7 +31,7 @@ echo "[0] Property predictor: $prop_id"
 label_id=$(sbatch --dependency=afterok:$prep_id train_labeler.sh train.epochs=$pp_epochs | awk '{print $4}')
 echo "[0] Labling: $label_id"
 
-for step in $(seq 1 $N_STEPS); do
+for step in $(seq 3 $N_STEPS); do
     echo "============================"
     echo "=== Active Learning Step $step ==="
     echo "============================"
