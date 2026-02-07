@@ -4,11 +4,13 @@ set -euo pipefail
 
 # Resolve config relative to script location (important on SLURM)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/config.sh"
+source "$SCRIPT_DIR/$1"
 
 [ -d $GENERATOR_CHECKPOINT_DIR ] || mkdir $GENERATOR_CHECKPOINT_DIR
 [ -d $GENERATOR_CHECKPOINT_DIR/datasets ] || mkdir $GENERATOR_CHECKPOINT_DIR/datasets
 [ -d $GENERATOR_CHECKPOINT_DIR/checkpoints ] || mkdir $GENERATOR_CHECKPOINT_DIR/checkpoints
+
+cp ../master_0.csv $GENERATOR_CHECKPOINT_DIR/datasets
 
 echo "Generator checkpoint directory: $GENERATOR_CHECKPOINT_DIR"
 echo "Generator directory: $GENERATOR_DIR"
@@ -31,7 +33,7 @@ echo "[0] Property predictor: $prop_id"
 label_id=$(sbatch --dependency=afterok:$prep_id train_labeler.sh train.epochs=$pp_epochs | awk '{print $4}')
 echo "[0] Labling: $label_id"
 
-for step in $(seq 3 $N_STEPS); do
+for step in $(seq 1 $N_STEPS); do
     echo "============================"
     echo "=== Active Learning Step $step ==="
     echo "============================"

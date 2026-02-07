@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 
 # ---- AL params ----
-N_STEPS=9
-TARGET_ORACLE_FREQUENCY=3
+N_STEPS=2
+TARGET_ORACLE_FREQUENCY=1
 n_samples_target_oracle=500
 # Generator params
-num_samples_ood=5000
+num_samples_ood=500
 sample_batch_size=500
-max_epochs=1000
+max_epochs=100
 temperature_min=0.7
 temperature_max=0.7
-tag="no_labeling"
+tag="test_run"
 
 # Property filtering/Labeling params
-pp_epochs=100
+pp_epochs=30
 
 # ---- Paths ----
-GENERATOR_DIR="$projects/STGG-AL"
-PROPERTY_PREDICTOR_DIR="$projects/hamiltonian"
+GENERATOR_DIR="$HOME/projects/rrg-bengioy-ad/jaggbow/STGG-AL"
+PROPERTY_PREDICTOR_DIR="$HOME/projects/rrg-bengioy-ad/jaggbow/hamiltonian"
 GENERATOR_CHECKPOINT_DIR="$SCRATCH/AutoregressiveMolecules_checkpoints/$tag"
 GAUSSIAN_DIR="$SCRATCH/AutoregressiveMolecules_checkpoints/gaussian"
 

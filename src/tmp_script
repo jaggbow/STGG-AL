@@ -1,0 +1,18 @@
+#!/bin/bash
+#SBATCH --account=rrg-bengioy-ad
+#SBATCH --job-name=stgg376
+#SBATCH --output=/scratch/jaggbow/slurm-%j.out
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+#SBATCH --time=8:00:00
+
+module load gaussian/g16 
+
+export GAUSS_SCRDIR=$SCRATCH/$SLURM_JOB_ID
+mkdir -p $GAUSS_SCRDIR
+
+g16 /scratch/jaggbow/AutoregressiveMolecules_checkpoints/gaussian/1761932338521/stgg376.gjf
+
+rm -rf $GAUSS_SCRDIR
+    

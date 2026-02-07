@@ -20,10 +20,10 @@ cd src
 python labeling.py --smiles_path=$smiles_path --old_master_path=$old_master_csv
 
 # Move checkpoints
-mv $GENERATOR_CHECKPOINT_DIR/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/generator_${old_master_index}.ckpt
 mv $PROPERTY_PREDICTOR_DIR/results/STGGDataset/filtering/1/0/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/filtering_${old_master_index}.ckpt
 if [ "$move_filtering_ckpt" = true ] ; then
     mv $PROPERTY_PREDICTOR_DIR/results/STGGDataset/labeling/1/0/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/labeling_${old_master_index}.ckpt
+    mv $GENERATOR_CHECKPOINT_DIR/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/generator_${old_master_index}.ckpt
 fi
 
 # Move datasets
@@ -32,7 +32,7 @@ mv $GENERATOR_DIR/filtering.csv $GENERATOR_CHECKPOINT_DIR/datasets/filtering_${o
 mv $GENERATOR_DIR/labeling.csv $GENERATOR_CHECKPOINT_DIR/datasets/labeling_${old_master_index}.csv
 
 # Delete past checkpoints
-find $GENERATOR_CHECKPOINT_DIR -maxdepth 1 -name "*.ckpt" -delete
+# find $GENERATOR_CHECKPOINT_DIR -maxdepth 1 -name "*.ckpt" -delete
 
 
 # Delete cache

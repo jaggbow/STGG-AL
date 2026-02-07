@@ -359,7 +359,7 @@ if __name__ == "__main__":
     gaussian_df = pd.DataFrame.from_dict(result)
     gaussian_df.to_csv(smiles_path.parent / f"{smiles_path.stem}_gaussian.csv")
     smiles_data = pickle.load(open(smiles_path, "rb"))
-    smiles_data["statistics"]["num_sent_target_oracle"] = c
+    smiles_data["statistics"]["num_sent_target_oracle"] = n
     smiles_data["statistics"]["num_pass_target_oracle"] = c
     smiles_data["statistics"]["num_pass_target_oracle_property"] = youhou
     print(smiles_data["statistics"])

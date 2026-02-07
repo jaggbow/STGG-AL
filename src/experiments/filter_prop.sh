@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=6
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1
 #SBATCH --mem=48G
-#SBATCH --time=4:00:00
+#SBATCH --time=1:30:00
 #SBATCH -o /scratch/jaggbow/slurm-%j.out
 
 module load python/3.10
