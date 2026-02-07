@@ -2,7 +2,7 @@
 #SBATCH --account=rrg-bengioy-ad
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=72G
-#SBATCH --time=8:00:00
+#SBATCH --time=10:00:00
 #SBATCH -o /scratch/jaggbow/slurm-%j.out
 
 module load python/3.10
