@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
 # ---- AL params ----
-N_STEPS=9
+N_STEPS=10
 TARGET_ORACLE_FREQUENCY=3
 n_samples_target_oracle=500
+
 # Generator params
 num_samples_ood=5000
 sample_batch_size=500

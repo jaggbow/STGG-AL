@@ -85,7 +85,9 @@ for step in $(seq 1 $N_STEPS); do
     	# No labeling model training, just prep the data
 	prep_id=$(sbatch --dependency=afterok:$parse_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/prepare_all_data.sh --save_labeling | awk '{print $4}')
     fi
-    gen_id=$(sbatch --dependency=afterok:$prep_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/generator.sh \
+
+    if (( $step < $N_STEPS )); then
+    	gen_id=$(sbatch --dependency=afterok:$prep_id --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR experiments/generator.sh \
             --tag $tag \
             --temperature_min $temperature_min \
             --temperature_max $temperature_max \
@@ -93,11 +95,11 @@ for step in $(seq 1 $N_STEPS); do
             --max_epochs $max_epochs \
             --sample_batch_size $sample_batch_size | awk '{print $4}')
 
-    echo "[$step] Generator: $gen_id"
-    cd $PROPERTY_PREDICTOR_DIR
-    prop_id=$(sbatch --dependency=afterok:$prep_id train_filtering.sh train.epochs=$pp_epochs | awk '{print $4}')
-    echo "[$step] Property predictor: $prop_id"
-
+    	echo "[$step] Generator: $gen_id"
+    	cd $PROPERTY_PREDICTOR_DIR
+    	prop_id=$(sbatch --dependency=afterok:$prep_id train_filtering.sh train.epochs=$pp_epochs | awk '{print $4}')
+    	echo "[$step] Property predictor: $prop_id"
+    fi
 
 done
 
