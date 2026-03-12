@@ -18,6 +18,6 @@ cd $GENERATOR_DIR
 source .venv/bin/activate
 cd src
 echo "Computing xtb energies on ${smiles_path}."
-python compute_xtb_energies.py --smiles_path=$smiles_path --num_workers=24 --timeout=180
+python compute_xtb_energies.py --smiles_path=$smiles_path --num_workers=24 --timeout=180 "$@"
 deactivate
 
