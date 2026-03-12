@@ -14,6 +14,7 @@ temperature_max=0.7
 tag="main_exp"
 
 # Property filtering/Labeling params
+noise_level=0
 pp_epochs=100
 
 # ---- Paths ----
@@ -21,4 +22,4 @@ GENERATOR_DIR="$HOME/projects/rrg-bengioy-ad/jaggbow/STGG-AL"
 PROPERTY_PREDICTOR_DIR="$HOME/projects/rrg-bengioy-ad/jaggbow/hamiltonian"
 GENERATOR_CHECKPOINT_DIR="$SCRATCH/AutoregressiveMolecules_checkpoints/$tag"
 GAUSSIAN_DIR="$SCRATCH/AutoregressiveMolecules_checkpoints/gaussian"
-
+master_path=$GENERATOR_DIR/master_0.csv

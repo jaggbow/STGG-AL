@@ -10,7 +10,18 @@ from multiprocessing import Process, Queue
 import os
 import time
 from queue import Empty
+import hashlib
+import numpy as np
 
+
+VS1_XTB_RMS = 3.298644208969044
+VDELTA_XTB_RMS = 0.81681177503766
+
+
+def smiles_seeded_noise(smiles, sigma):
+    seed = int(hashlib.md5(smiles.encode()).hexdigest(), 16) % (2**32)
+    rng = np.random.RandomState(seed)
+    return rng.randn() * sigma
 
 def _embed_ff_optimize(mol, workdir, n_confs: int = 50):
     """
@@ -167,6 +178,7 @@ if __name__ == "__main__":
     parser.add_argument("--smiles_path", type=str)
     parser.add_argument("--timeout", type=int, default=75)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--noise_level", type=float, default=0)
     args = parser.parse_args()
 
     smiles_path = Path(args.smiles_path)
@@ -227,8 +239,8 @@ if __name__ == "__main__":
                         vs1, vt1 = _xtb_energies(xyz_out, finaldir, stda_cutoff=10)
                         payload[mol_id] = {"SMILES": smi}
                         payload[mol_id]["xtb_coordinates_path"] = xyz_out.absolute().as_posix()
-                        payload[mol_id]["vs1_xtb"] = vs1
-                        payload[mol_id]["vdelta_xtb"] = vs1 - vt1
+                        payload[mol_id]["vs1_xtb"] = vs1 + smiles_seeded_noise(smi, args.noise_level * VS1_XTB_RMS)
+                        payload[mol_id]["vdelta_xtb"] = (vs1 - vt1) + smiles_seeded_noise(smi, args.noise_level * VDELTA_XTB_RMS)
                     except Exception as e:
                         tqdm.write(f"❌ XTB Error for {smi} (id: {mol_id}): {e}")
                         error_count += 1

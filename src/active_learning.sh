@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/$1"
 [ -d $GENERATOR_CHECKPOINT_DIR/datasets ] || mkdir $GENERATOR_CHECKPOINT_DIR/datasets
 [ -d $GENERATOR_CHECKPOINT_DIR/checkpoints ] || mkdir $GENERATOR_CHECKPOINT_DIR/checkpoints
 
-cp ../master_0.csv $GENERATOR_CHECKPOINT_DIR/datasets
+cp $master_path $GENERATOR_CHECKPOINT_DIR/datasets
 
 echo "Generator checkpoint directory: $GENERATOR_CHECKPOINT_DIR"
 echo "Generator directory: $GENERATOR_DIR"
@@ -44,7 +44,7 @@ for step in $(seq 1 $N_STEPS); do
 
     xtb_id=$(sbatch --dependency=afterok:$filter_prop_id \
         --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR \
-        experiments/run_xtb.sh | awk '{print $4}')
+        experiments/run_xtb.sh --noise_level=$noise_level | awk '{print $4}')
     echo "[$step] XTB computation: $xtb_id"
   
     labeling_id=$(sbatch --dependency=afterok:$xtb_id:$label_id \
