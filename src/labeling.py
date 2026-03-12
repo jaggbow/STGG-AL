@@ -25,6 +25,11 @@ if __name__ == "__main__":
     csv_gaussian = smiles_path.parent / f"{smiles_id}_gaussian.csv"
 
     df_labeling = pd.read_csv(csv_labeling, index_col=0)
+    if "vs1_xtb" in df_labeling:
+        del df_labeling["vs1_xtb"]
+    if "vdelta_xtb" in df_labeling:
+        del df_labeling["vdelta_xtb"]
+
     df_labeling["SMILES"] = df_labeling["molecule_id"].apply(lambda x: payload[x]["SMILES"])
     df_labeling["xtb_coordinates_path"] = df_labeling["molecule_id"].apply(
         lambda x: payload[x]["xtb_coordinates_path"]

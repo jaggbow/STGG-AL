@@ -8,7 +8,8 @@
 module load python/3.10
 module load xtb
 
-move_filtering_ckpt=$1
+move_labeling_ckpt=$1
+move_generator_ckpt=$2
 
 smiles_path=$(ls -t "$GENERATOR_CHECKPOINT_DIR"/*.pkl 2>/dev/null | grep -E '/[0-9]+\.pkl$' | head -n 1)
 old_master_csv=$(ls -td $GENERATOR_CHECKPOINT_DIR/datasets/master_*.csv | head -n1)
@@ -21,8 +22,10 @@ python labeling.py --smiles_path=$smiles_path --old_master_path=$old_master_csv
 
 # Move checkpoints
 mv $PROPERTY_PREDICTOR_DIR/results/STGGDataset/filtering/1/0/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/filtering_${old_master_index}.ckpt
-if [ "$move_filtering_ckpt" = true ] ; then
+if [ "$move_labeling_ckpt" = true ] ; then
     mv $PROPERTY_PREDICTOR_DIR/results/STGGDataset/labeling/1/0/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/labeling_${old_master_index}.ckpt
+fi
+if [ "$move_generator_ckpt" = true ] ; then
     mv $GENERATOR_CHECKPOINT_DIR/last.ckpt $GENERATOR_CHECKPOINT_DIR/checkpoints/generator_${old_master_index}.ckpt
 fi
 
@@ -32,8 +35,9 @@ mv $GENERATOR_DIR/filtering.csv $GENERATOR_CHECKPOINT_DIR/datasets/filtering_${o
 mv $GENERATOR_DIR/labeling.csv $GENERATOR_CHECKPOINT_DIR/datasets/labeling_${old_master_index}.csv
 
 # Delete past checkpoints
-# find $GENERATOR_CHECKPOINT_DIR -maxdepth 1 -name "*.ckpt" -delete
-
+if [ "$move_generator_ckpt" = true ] ; then
+    find $GENERATOR_CHECKPOINT_DIR -maxdepth 1 -name "*.ckpt" -delete
+fi
 
 # Delete cache
 find $PROPERTY_PREDICTOR_DIR/datasets -mindepth 1 -type f -delete
