@@ -1,0 +1,108 @@
+Generator checkpoint directory: /scratch/jaggbow/AutoregressiveMolecules_checkpoints/main_exp_noisy
+Generator directory: /home/jaggbow/projects/rrg-bengioy-ad/jaggbow/STGG-AL
+Property predictor directory: /home/jaggbow/projects/rrg-bengioy-ad/jaggbow/hamiltonian
+[0] Prepare data; 27825795
+[0] Generator: 27825796
+[0] Property predictor: 27825797
+[0] Labling: 27825798
+============================
+=== Active Learning Step 1 ===
+============================
+[1] Property filtering: 27825799
+[1] XTB computation: 27825800
+[1] Labeling: 27825801
+[1] Parse results: 27825802
+[1] Generator: 27825804
+[1] Property predictor: 27825805
+============================
+=== Active Learning Step 2 ===
+============================
+[2] Property filtering: 27825806
+[2] XTB computation: 27825807
+[2] Labeling: 27825808
+[2] Parse results: 27825809
+[2] Generator: 27825811
+[2] Property predictor: 27825812
+============================
+=== Active Learning Step 3 ===
+============================
+[3] Property filtering: 27825813
+[3] XTB computation: 27825814
+[3] Labeling: 27825816
+[3] Make Gaussian: 27825817
+Waiting for step 3 to finish (job 27825817)...
+[3] Launch Gaussian: 28092527
+[3] Parse Gaussian: 28092528
+[3] Parse results: 28092529
+[3] Generator: 28092534
+[3] Property predictor: 28092535
+============================
+=== Active Learning Step 4 ===
+============================
+[4] Property filtering: 28092536
+[4] XTB computation: 28092537
+[4] Labeling: 28092538
+[4] Parse results: 28092539
+[4] Generator: 28092541
+[4] Property predictor: 28092542
+============================
+=== Active Learning Step 5 ===
+============================
+[5] Property filtering: 28092543
+[5] XTB computation: 28092544
+[5] Labeling: 28092545
+[5] Parse results: 28092546
+[5] Generator: 28092548
+[5] Property predictor: 28092549
+============================
+=== Active Learning Step 6 ===
+============================
+[6] Property filtering: 28092550
+[6] XTB computation: 28092551
+[6] Labeling: 28092552
+[6] Make Gaussian: 28092553
+Waiting for step 6 to finish (job 28092553)...
+[6] Launch Gaussian: 28411594
+[6] Parse Gaussian: 28411596
+[6] Parse results: 28411597
+[6] Generator: 28411628
+[6] Property predictor: 28411629
+============================
+=== Active Learning Step 7 ===
+============================
+[7] Property filtering: 28411630
+[7] XTB computation: 28411631
+[7] Labeling: 28411632
+[7] Parse results: 28411633
+[7] Generator: 28411635
+[7] Property predictor: 28411636
+============================
+=== Active Learning Step 8 ===
+============================
+[8] Property filtering: 28411637
+[8] XTB computation: 28411638
+[8] Labeling: 28411639
+[8] Parse results: 28411640
+[8] Generator: 28411652
+[8] Property predictor: 28411653
+============================
+=== Active Learning Step 9 ===
+============================
+[9] Property filtering: 28411680
+[9] XTB computation: 28411681
+[9] Labeling: 28411682
+[9] Make Gaussian: 28411683
+Waiting for step 9 to finish (job 28411683)...
+[9] Launch Gaussian: 28688023
+[9] Parse Gaussian: 28688025
+[9] Parse results: 28688028
+[9] Generator: 28688033
+[9] Property predictor: 28688034
+============================
+=== Active Learning Step 10 ===
+============================
+[10] Property filtering: 28688036
+[10] XTB computation: 28688037
+[10] Labeling: 28688038
+[10] Parse results: 28688039
+All 10 steps submitted successfully.

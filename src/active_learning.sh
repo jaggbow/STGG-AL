@@ -33,6 +33,8 @@ echo "[0] Property predictor: $prop_id"
 label_id=$(sbatch --dependency=afterok:$prep_id train_labeler.sh train.epochs=$pp_epochs | awk '{print $4}')
 echo "[0] Labling: $label_id"
 
+move_generator_ckpt=true
+
 for step in $(seq 1 $N_STEPS); do
     echo "============================"
     echo "=== Active Learning Step $step ==="
@@ -68,7 +70,7 @@ for step in $(seq 1 $N_STEPS); do
 	continue_id=$parse_gaussian_id
     fi
     parse_id=$(sbatch --dependency=afterok:$continue_id \
-        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR experiments/parse_results.sh $move_filtering_ckpt | awk '{print $4}')
+        --export=ALL,GENERATOR_DIR=$GENERATOR_DIR,PROPERTY_PREDICTOR_DIR=$PROPERTY_PREDICTOR_DIR,GENERATOR_CHECKPOINT_DIR=$GENERATOR_CHECKPOINT_DIR,GAUSSIAN_DIR=$GAUSSIAN_DIR experiments/parse_results.sh $move_filtering_ckpt $move_generator_ckpt | awk '{print $4}')
     echo "[$step] Parse results: $parse_id"
     
     # Training time
